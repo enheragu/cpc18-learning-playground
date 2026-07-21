@@ -1,0 +1,3 @@
+[submodule "mnist-learning-playground"]
+	path = mnist-learning-playground
+	url = https://github.com/enheragu/mnist-learning-playground.git

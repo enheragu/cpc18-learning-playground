@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Project: downloaded raw data (regenerable via cpc18_utils.data)
+data/all_CPC18_raw_data.csv
+data/all_CPC18_raw_data.csv.part
+data/cpc18_aggregate.parquet
+
+# Project: training outputs (regenerable; consider releasing as artifact for paper)
+output_data/
+logs/
+
+# Project: analysis tables/figures (regenerable from output_data).
+analysis_results/*
+
+# Project: third-party baseline source bundles (fetched via deps/download.sh,
+# external license — commit the fetch script, not the downloaded content)
+deps/*
+!deps/download.sh
+
+# Background task outputs
+*.lock
+!requirements.lock
+
+# Internal working docs (not for the public repo): messy research notes
+# and the manuscript-review resolution log.
+NOTES.md
+REVIEW_LOG.md
+
+.mypy_cache
+.pytest_cache
+*.code-workspace
