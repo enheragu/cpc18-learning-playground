@@ -39,6 +39,14 @@ keywords:
   - reproducibility
 version: 1.0.0
 license: MIT
+doi: 10.5281/zenodo.24013058
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24013058
+    description: "Concept DOI: all versions, resolves to the latest release"
+  - type: doi
+    value: 10.5281/zenodo.24013059
+    description: "Version 1.0.0"
 references:
   - type: software
     title: "Performance variability of neural network training on MNIST and YOLO object detection: training and analysis code"

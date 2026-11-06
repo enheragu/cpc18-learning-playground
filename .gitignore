@@ -51,6 +51,7 @@ deps/*
 
 # Project: public data deposit built by src/16_export_zenodo.py (upload, do not commit)
 zenodo_export/
+zenodo_export.building/
 
 # Cross-machine raw results: CPU probe outputs and fetched cloud sweeps
 # (their content is in the data deposit, as probes.csv and trials.csv)

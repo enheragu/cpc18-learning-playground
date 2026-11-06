@@ -1,5 +1,7 @@
 # Variance-aware evaluation of CPC18 choice prediction models
 
+<p align="center"><a href="https://doi.org/10.5281/zenodo.24013058"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.24013058.svg" alt="DOI 10.5281/zenodo.24013058" /></a></p>
+
 Train the same model twice with different random seeds and you get two different results. This repository measures how
 large that variability is in models that predict human decisions, and what it means when you compare them.
 
@@ -189,7 +191,10 @@ published version.
 ## 📝 How to cite
 
 If you use this software, please cite it: the metadata are in [`CITATION.cff`](CITATION.cff), and GitHub's *Cite this
-repository* button exports them as APA or BibTeX. When reporting results, please also cite the article above.
+repository* button exports them as APA or BibTeX. The DOI [10.5281/zenodo.24013058](https://doi.org/10.5281/zenodo.24013058)
+always resolves to the latest release; each release also has its own DOI (v1.0.0:
+[10.5281/zenodo.24013059](https://doi.org/10.5281/zenodo.24013059)), which is the one to cite when reporting results
+obtained with that version. When reporting results, please also cite the article above.
 
 ## ⚖️ License
 
