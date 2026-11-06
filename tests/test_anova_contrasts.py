@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 """
-Regression test for the §1.2 fix.
+Regression test for the ANOVA contrast coding.
 
 `twoWayAnova` must use sum-to-zero contrasts so that, on a balanced design,
 its type-III sum-of-squares decomposition equals the type-I decomposition.

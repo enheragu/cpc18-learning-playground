@@ -7,6 +7,7 @@ Ablation trainer for B1 (BourginMLP batch_size × learning_rate) and B3
 
 Run with:
     python 04_train_ablation.py --study b1 --workers 6
+    python 04_train_ablation.py --study b1x --workers 6
     python 04_train_ablation.py --study b3 --workers 6
 
 Each ablation condition is its own subclass (cpc18_models.ablation.py),
@@ -61,7 +62,7 @@ from utils.set_seed import set_seed
 from cpc18_utils import output_path
 from cpc18_utils.features import load_cpc18_features, cpc18_features_input_size
 from cpc18_utils.data import CPC18Dataset
-from cpc18_utils.safe_yaml import atomicUpdateMetricsLogFile, fastLoadYaml
+from cpc18_utils.safe_yaml import addTrials, atomicUpdateMetricsLogFile, fastLoadYaml
 from cpc18_models.ablation import B1_CLASSES, B1X_CLASSES, B3_CLASSES
 
 
@@ -71,21 +72,13 @@ _MODEL_REGISTRY = {cls.__name__: cls
 
 # ---------------------------------------------------------------------
 # Configuration — change these to re-scope the experiment.
-# See NOTES.md §5.A for the unified sample size table across trainers.
 # ---------------------------------------------------------------------
 
 # Seed pool. Must match 01_train_regime2.py and 03_train_decomp.py for
 # per-seed cross-experiment analysis to work.
 MASTER_SEED_FOR_POOL = 20260522
 
-# Per-cell sample size. Different per study because of historical
-# imbalance: B1 cells already had 400-800 trials each before the
-# cap-truncation issue was caught, so we keep N=800 there to avoid
-# losing any of the already-paid-for work (after the cap-fix re-runs
-# at num_epochs=1500). B3 cells were uniformly at 400; bumping them to
-# 600 is enough for the ANOVA decomposition and the closest-pair
-# misranking probability at the precision the parent paper used on
-# MNIST (300/cell).
+# Per-cell sample size.
 N_TRIALS_BY_STUDY = {"b1": 800, "b1x": 800, "b3": 800}
 
 # Per-trial hyperparameters. Note: `learning_rate` is OVERRIDDEN per
@@ -219,10 +212,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--study", choices=("b1", "b1x", "b3"), required=True)
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--conditions", type=str, default=None,
+                         help="Comma-separated ablation class names to "
+                              "restrict this run to (default: all "
+                              "conditions of --study).")
     args = parser.parse_args()
 
     class_list = {"b1": B1_CLASSES, "b1x": B1X_CLASSES,
                   "b3": B3_CLASSES}[args.study]
+    if args.conditions:
+        wanted = [c.strip() for c in args.conditions.split(",") if c.strip()]
+        by_name = {c.__name__: c for c in class_list}
+        missing = [w for w in wanted if w not in by_name]
+        if missing:
+            raise SystemExit(
+                f"Unknown condition(s) for --study {args.study}: {missing}")
+        class_list = [by_name[w] for w in wanted]
     n_target = N_TRIALS_BY_STUDY[args.study]
     log(f"[main] Ablation {args.study.upper()}. Conditions: {len(class_list)}. "
         f"Trials per condition: {n_target}. "
@@ -253,7 +258,7 @@ def main():
     pending_count = defaultdict(int)
 
     def _handleResult(model_name, seed, run_metrics):
-        buffers[model_name].update(run_metrics)
+        addTrials(buffers[model_name], run_metrics)
         pending_count[model_name] += 1
         if pending_count[model_name] >= FLUSH_EVERY:
             log(f"[flush] {model_name}: writing batch of "
@@ -261,6 +266,7 @@ def main():
             _flushBatch(model_name, buffers[model_name])
             pending_count[model_name] = 0
 
+    failed = 0
     try:
         if args.workers <= 1:
             for task in tasks:
@@ -269,6 +275,7 @@ def main():
                     log(f"[main] done {model_name}/{seed}")
                     _handleResult(model_name, seed, run_metrics)
                 except Exception:
+                    failed += 1
                     log(f"[main] task {task} crashed:\n{traceback.format_exc()}")
         else:
             with ProcessPoolExecutor(max_workers=args.workers) as ex:
@@ -279,6 +286,7 @@ def main():
                         log(f"[main] done {model_name}/{seed}")
                         _handleResult(model_name, seed, run_metrics)
                     except Exception:
+                        failed += 1
                         log(f"[main] task {futs[fut]} crashed:\n{traceback.format_exc()}")
     finally:
         # Final flush — write everything still buffered, even on crash.
@@ -286,6 +294,8 @@ def main():
             if buf:
                 log(f"[flush] {model_name}: final flush of {len(buf)} trials")
                 _flushBatch(model_name, buf)
+    if failed:
+        raise SystemExit(f"{failed} of {len(tasks)} trials failed")
 
 
 if __name__ == "__main__":

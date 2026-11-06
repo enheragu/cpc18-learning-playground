@@ -18,12 +18,15 @@ multiple worker processes this races as:
 
 Result: ~25% of trials were silently lost in our N=100, workers=6 run.
 
-The CLAUDE.md instructs us not to modify the submodule, so we keep
+The submodule is reused unmodified, so we keep
 the same `FileLock` primitive but hold it across the whole
 read-modify-write sequence.
 """
 
 import os
+import re
+from datetime import datetime, timedelta
+
 import yaml
 
 from utils.file_lock import FileLock
@@ -63,7 +66,7 @@ def atomicUpdateMetricsLogFile(metrics: dict, file_path: str) -> None:
         else:
             current = {}
 
-        _deep_merge(current, metrics)
+        addTrials(current, metrics)
 
         # Atomic on POSIX: write to a sibling tempfile then rename.
         tmp_path = file_path + ".tmp"
@@ -76,6 +79,24 @@ def atomicUpdateMetricsLogFile(metrics: dict, file_path: str) -> None:
         os.replace(tmp_path, file_path)
 
     log(f"[atomic] Updated metrics file in: {file_path}")
+
+
+_TRIAL_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.\d{3}$")
+_TRIAL_KEY_FORMAT = "%Y-%m-%d_%H-%M-%S.%f"
+
+
+def addTrials(dst: dict, trials: dict) -> dict:
+    """Merge trials keyed by the millisecond they ended. Two different trials
+    can end in the same millisecond: the later one takes the next free key,
+    so that it does not overwrite the other."""
+    for key, entry in trials.items():
+        if _TRIAL_KEY.match(key) and key in dst and dst[key] != entry:
+            moment = datetime.strptime(key, _TRIAL_KEY_FORMAT)
+            while key in dst:
+                moment += timedelta(milliseconds=1)
+                key = moment.strftime(_TRIAL_KEY_FORMAT)[:-3]
+        _deep_merge(dst, {key: entry})
+    return dst
 
 
 def _deep_merge(dst: dict, src: dict) -> dict:

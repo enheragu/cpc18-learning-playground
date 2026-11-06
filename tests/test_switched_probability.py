@@ -6,8 +6,8 @@ Sanity test for the misranking helper.
 For two equal-variance Gaussians the probability that a single draw reverses
 the order has a closed form, P(swap | N=1) = Phi(-|dmu| / (sigma * sqrt(2))).
 The Monte Carlo estimate produced by the shared submodule helper must match
-it. This is the analytical check the §4.6 recommendation asks for; it also
-pins the semantics of the statistic the paper reports.
+it. This is an analytical check of the helper; it also pins the semantics
+of the statistic the paper reports.
 """
 
 import numpy as np

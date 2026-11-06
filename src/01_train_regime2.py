@@ -15,13 +15,13 @@ Reuses the seed-mode machinery and parallel runner of regime 1
   sklearn-style, wrapped via SklearnRegressorTrainer.
 - Writes YAMLs with prefix `_r2` to keep them separate from regime 1.
 
-Pool of models = 4 (kept tight on purpose):
-  - LinearLogistic   — convex baseline at the BEAST-features regime
-  - BourginMLP       — Bourgin 2019 NN architecture, on enriched features
-  - PsychForest      — Plonsky 2017 (AAAI)
-  - BEAST_GB         — Plonsky 2018/2024 (CPC18 winner / Nature 2025)
-
-Two model families, three published lineages, one comparable metric.
+Pool of models = 6:
+  - LinearLogistic   - single-layer baseline at the BEAST-features regime
+  - BourginMLP       - Bourgin 2019 NN architecture, on enriched features
+  - ContextDepNet    - Thomas 2024 NN architecture, on the same features
+  - SparseMLP        - BourginMLP with a static sparse mask (Mocanu 2018)
+  - PsychForest      - Plonsky 2017 (AAAI)
+  - BEAST_GB         - Plonsky 2018/2024 (CPC18 winner / Nature 2025)
 """
 
 import os
@@ -71,7 +71,6 @@ _MODEL_REGISTRY = {
 
 # ---------------------------------------------------------------------
 # Configuration — change these to re-scope the experiment.
-# See NOTES.md §5.A for the unified sample size table across trainers.
 # ---------------------------------------------------------------------
 
 # Seed pool master. The same value is used by 04_train_ablation.py and
@@ -90,7 +89,7 @@ patience = 50
 num_epochs = 500
 batch_size = 32
 
-# Train/test split: canonical Plonsky 2018 (210/60 problems), shipped
+# Train/test split: canonical Plonsky 2018 (208 of its 210 train problems, 60 test), shipped
 # in data/cpc18_features.csv. No `split_seed` here (regime 1 uses one).
 
 # Device selection. CPU by default; set CPC18_USE_GPU=1 to override.
@@ -201,7 +200,22 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--models", type=str, default=None,
+                         help="Comma-separated model class names to "
+                              "restrict this run to (default: all 6 "
+                              "models in the registry).")
     args = parser.parse_args()
+
+    global model_iterations
+    if args.models:
+        wanted = [m.strip() for m in args.models.split(",") if m.strip()]
+        missing = [w for w in wanted if w not in _MODEL_REGISTRY]
+        if missing:
+            raise SystemExit(f"Unknown model(s): {missing}")
+        model_iterations = {
+            _MODEL_REGISTRY[w]: model_iterations[_MODEL_REGISTRY[w]]
+            for w in wanted
+        }
 
     input_size = cpc18_features_input_size()
     log(f"[main] Regime 2. Device: {device}. Input size: {input_size}. "
@@ -223,12 +237,16 @@ def main():
 
     tasks = _buildTaskList(shared_pool)
 
+    failed = 0
     if args.workers <= 1:
         for task in tasks:
             try:
                 log(f"[main] {_runOneTrial(task)}")
             except Exception:
+                failed += 1
                 log(f"[main] trial {task} crashed:\n{traceback.format_exc()}")
+        if failed:
+            raise SystemExit(f"{failed} of {len(tasks)} trials failed")
         return
 
     # Default fork mp_context is fine because BEAST_GB lazy-imports
@@ -241,7 +259,11 @@ def main():
             try:
                 log(f"[main] {fut.result()}")
             except Exception:
+                failed += 1
                 log(f"[main] task {futs[fut]} crashed:\n{traceback.format_exc()}")
+
+    if failed:
+        raise SystemExit(f"{failed} of {len(tasks)} trials failed")
 
 
 if __name__ == "__main__":

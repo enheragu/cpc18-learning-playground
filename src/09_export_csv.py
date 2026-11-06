@@ -9,17 +9,22 @@ in R (or any other tool).  One CSV per experiment family:
   analysis_results/csv/results_sharedpool_r2.csv     regime 2, 6 models × 800
   analysis_results/csv/results_ablation_b1.csv       B1: BourginMLP batch × lr, 9 × 800
   analysis_results/csv/results_ablation_b3.csv       B3: SparseMLP eps × lr, 9 × 800
+  analysis_results/csv/results_ablation_b1x.csv      B1 grid-sensitivity column, 3 × 800
   analysis_results/csv/results_factorial_decomp.csv  Phase C: init × order, 4 × 1225
+  analysis_results/csv/results_valsplit.csv          validation-split early stopping
+  analysis_results/csv/results_split_variance.csv    split-induced variance
+  analysis_results/csv/results_perproblem_errors.csv per-problem errors
 
-Reproducibility constants (split_seed, master seeds) appear as columns so
-each CSV is self-contained.
+Reproducibility constants (master seeds) appear as columns so
+each CSV is self-contained. Without the training logs, the CSVs are built from
+the data deposit (see cpc18_utils/training_logs.py): the columns that the
+deposit does not hold are empty, and regime 1 is not exported.
 
 Usage:
     cd src && python 09_export_csv.py
 """
 
 import os
-import re
 
 import path_setup  # noqa: F401
 
@@ -27,11 +32,9 @@ import pandas as pd
 
 from utils.log_utils import log, bcolors
 from cpc18_utils import output_path
-from cpc18_utils.safe_yaml import fastLoadYaml
+from cpc18_utils.training_logs import loadTrainingLog, trainingConditions, usesDeposit, depositRows
 from cpc18_models.ablation import B1_CLASSES, B1X_CLASSES, B3_CLASSES
 
-
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_")
 
 # Reproducibility constants — must match the trainer scripts.
 SPLIT_SEED            = 42
@@ -45,12 +48,11 @@ _DECOMP_MODELS = ("BourginMLP", "LinearLogistic", "ContextDepNet", "SparseMLP")
 
 
 def _load_trials(yaml_path):
-    """Return list of entry dicts from a training-metrics YAML."""
-    if not os.path.exists(yaml_path):
+    """Return list of entry dicts from a training-metrics log."""
+    try:
+        return list(loadTrainingLog(yaml_path).values())
+    except FileNotFoundError:
         return []
-    data = fastLoadYaml(yaml_path)
-    return [v for k, v in data.items()
-            if _DATE_RE.match(k) and isinstance(v, dict)]
 
 
 def _common_fields(t, regime=None):
@@ -66,9 +68,10 @@ def _common_fields(t, regime=None):
         "total_epochs":       t.get("total_epochs"),
         "patience":           t.get("patience"),
         "train_duration":     t.get("train_duration"),
-        "split_seed":         SPLIT_SEED,
         "master_seed_for_pool": MASTER_SEED_FOR_POOL,
     }
+    if regime == 1:  # the other experiments use the canonical split
+        row["split_seed"] = SPLIT_SEED
     if regime is not None:
         row["regime"] = regime
     return row
@@ -78,7 +81,7 @@ def export_sharedpool(regime: int):
     suffix = ("sharedpool_training_metrics.yaml" if regime == 1
               else "sharedpool_r2_training_metrics.yaml")
     rows = []
-    for model_name in sorted(os.listdir(output_path)):
+    for model_name in trainingConditions():
         if "_B" in model_name or "_E" in model_name:   # skip ablation dirs
             continue
         trials = _load_trials(os.path.join(output_path, model_name, suffix))
@@ -127,7 +130,6 @@ def export_ablation(study: str):
                 "total_epochs": t.get("total_epochs"),
                 "patience":    t.get("patience"),
                 "train_duration": t.get("train_duration"),
-                "split_seed":  SPLIT_SEED,
                 "master_seed_for_pool": MASTER_SEED_FOR_POOL,
             }
             rows.append(row)
@@ -175,7 +177,6 @@ def export_valsplit():
                 "learning_rate":      t.get("learning_rate"),
                 "batch_size":         t.get("batch_size"),
                 "train_duration":     t.get("train_duration"),
-                "split_seed":         SPLIT_SEED,
                 "master_seed_for_pool": MASTER_SEED_FOR_POOL,
             })
 
@@ -194,12 +195,15 @@ def export_split_variance():
     split_variance_rerun.py). Values are MSE x100 per split."""
     import numpy as np
     npz_path = os.path.join(_repo_root, "analysis_results", "split_variance.npz")
-    if not os.path.exists(npz_path):
-        log("  [WARN] no split_variance.npz", color=bcolors.WARNING)
+    if usesDeposit(npz_path):
+        rows = depositRows("split_variance.csv")
+    else:
+        d = np.load(npz_path, allow_pickle=True)
+        rows = [{"model": m, "split_index": i, "mse_x100": float(v)}
+                for m in d.files for i, v in enumerate(d[m])]
+    if not rows:
+        log("  [WARN] no split-variance results", color=bcolors.WARNING)
         return
-    d = np.load(npz_path, allow_pickle=True)
-    rows = [{"model": m, "split_index": i, "mse_x100": float(v)}
-            for m in d.files for i, v in enumerate(d[m])]
     df = pd.DataFrame(rows)
     out = os.path.join(output_dir, "results_split_variance.csv")
     df.to_csv(out, index=False)
@@ -213,22 +217,25 @@ def export_perproblem():
     import numpy as np
     npz_path = os.path.join(_repo_root, "analysis_results",
                             "perproblem_errors.npz")
-    if not os.path.exists(npz_path):
-        log("  [WARN] no perproblem_errors.npz", color=bcolors.WARNING)
+    if usesDeposit(npz_path):
+        rows = depositRows("perproblem_errors.csv")
+    else:
+        d = np.load(npz_path, allow_pickle=True)
+        problems = d["problems"]
+        seeds = d["seeds"]
+        rows = []
+        for m in d.files:
+            if m in ("problems", "seeds"):
+                continue
+            E = d[m]   # (n_seeds, n_problems)
+            for si, s in enumerate(seeds):
+                for pj, p in enumerate(problems):
+                    rows.append({"model": m, "seed": int(s),
+                                 "problem_id": int(p),
+                                 "mean_sq_error_x100": float(E[si, pj])})
+    if not rows:
+        log("  [WARN] no per-problem results", color=bcolors.WARNING)
         return
-    d = np.load(npz_path, allow_pickle=True)
-    problems = d["problems"]
-    seeds = d["seeds"]
-    rows = []
-    for m in d.files:
-        if m in ("problems", "seeds"):
-            continue
-        E = d[m]   # (n_seeds, n_problems)
-        for si, s in enumerate(seeds):
-            for pj, p in enumerate(problems):
-                rows.append({"model": m, "seed": int(s),
-                             "problem_id": int(p),
-                             "mean_sq_error_x100": float(E[si, pj])})
     df = pd.DataFrame(rows)
     out = os.path.join(output_dir, "results_perproblem_errors.csv")
     df.to_csv(out, index=False)
@@ -263,7 +270,6 @@ def export_factorial_decomp():
                 "total_epochs":     t.get("total_epochs"),
                 "patience":         t.get("patience"),
                 "train_duration":   t.get("train_duration"),
-                "split_seed":       SPLIT_SEED,
                 "master_seed_init": MASTER_SEED_FOR_POOL,
                 "master_seed_order": MASTER_SEED_ORDER,
             })

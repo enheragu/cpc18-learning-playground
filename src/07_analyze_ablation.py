@@ -18,7 +18,6 @@
 """
 
 import os
-import re
 
 import path_setup  # noqa: F401
 
@@ -30,18 +29,15 @@ from statsmodels.stats.anova import anova_lm
 from utils.log_utils import log, logTable, bcolors
 from utils.compute_switched_probability import computeSwitchedProbability
 
-from cpc18_utils import output_path
-from cpc18_utils.safe_yaml import fastLoadYaml
+from cpc18_utils import output_path, analysis_path
+from cpc18_utils.training_logs import loadTrainingLog
 from cpc18_models.ablation import B1_CLASSES, B3_CLASSES
 
-
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_")
 
 # The submodule misranking helper draws from the global np.random stream
 # without seeding it; seed before the call so the closest-pair Monte
 # Carlo / Bootstrap table is bit-reproducible across runs.
 MISRANK_SEED = 20260522
-analysis_path = os.path.join(os.path.dirname(output_path), "analysis_results")
 tables_path = os.path.join(analysis_path, "tables")
 
 
@@ -62,10 +58,9 @@ def loadCell(cls):
     """ Returns the list of (seed, mse * 100) tuples for one ablation cell. """
     path = os.path.join(output_path, cls.__name__,
                         "sharedpool_r2_ablation_training_metrics.yaml")
-    data = fastLoadYaml(path)
     out = []
-    for k, v in data.items():
-        if _DATE_RE.match(k) and isinstance(v, dict) and "mse" in v:
+    for v in loadTrainingLog(path).values():
+        if "mse" in v:
             out.append((int(v["seed"]), float(v["mse"]) * 100.0))
     return out
 

@@ -12,7 +12,8 @@ zero risk of accidentally mixing trials across conditions.
 Two studies:
 
 - **B1: BourginMLP × {batch_size × learning_rate}** — direct analogue of
-  the MNIST paper §3.3 ablation, but on the BEAST-features regime.
+  the ablation of the MNIST study (mnist-learning-playground), but on the
+  BEAST-features regime.
 - **B3: SparseMLP × {epsilon × learning_rate}** — CPC18-specific: how
   does the Erdős–Rényi sparsity parameter interact with the optimiser
   step?
@@ -90,7 +91,7 @@ for _eps in B3_EPSILONS:
 # One extra learning-rate level at the log-midpoint of the two converged
 # B1 levels (10^-3.5 ~= 3.16e-4), so that {1e-4, 3.16e-4, 1e-3} x
 # {16, 32, 64} forms an all-converged 3x3 grid of the same size as the
-# published B1 grid. See REVIEW_2026_07_10.md (§A) in the paper repo.
+# published B1 grid ("Sensitivity to the grid", Section 3.4 of the manuscript).
 # ---------------------------------------------------------------------
 
 B1X_LEARNING_RATES = (3.16e-4,)

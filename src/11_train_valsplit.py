@@ -3,10 +3,10 @@
 
 """
 Sensitivity experiment: does test-set early stopping reshape the
-across-seed MSE distribution? (REVIEW_2026_07_10.md, item C2.)
+across-seed MSE distribution? (Section 5.5 of the manuscript.)
 
 The main-run protocol early-stops and selects the best epoch on the
-TEST set (declared limitation, §Limitations of the manuscript). Here we
+TEST set (declared in Section 2.5 of the manuscript). Here we
 re-train N seeds with an internal validation split: the 208 canonical
 train problems are split BY PROBLEM into 166 train / 42 validation
 (deterministic, VAL_SPLIT_SEED), early stopping monitors the validation
@@ -107,7 +107,7 @@ def _loadValSplit():
     y = lambda d: d["B_rate"].astype(np.float32).values
     return ((X_tr.astype(np.float32), y(tr_df)),
             (X_va.astype(np.float32), y(va_df)),
-            (X_te.astype(np.float32), y(te_df := test_df)),
+            (X_te.astype(np.float32), y(test_df)),
             len(problems) - N_VAL_PROBLEMS, N_VAL_PROBLEMS)
 
 
@@ -231,11 +231,13 @@ def main():
         atomicUpdateMetricsLogFile(run_metrics, _metricsPath(name))
         log(f"[main] done {name}/{seed}")
 
+    failed = 0
     if args.workers <= 1:
         for task in tasks:
             try:
                 _store(*_runOneTrial(task))
             except Exception:
+                failed += 1
                 log(f"[main] task {task} crashed:\n{traceback.format_exc()}")
     else:
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
@@ -244,8 +246,11 @@ def main():
                 try:
                     _store(*fut.result())
                 except Exception:
+                    failed += 1
                     log(f"[main] task {futs[fut]} crashed:\n"
                         f"{traceback.format_exc()}")
+    if failed:
+        raise SystemExit(f"{failed} of {len(tasks)} trials failed")
 
 
 if __name__ == "__main__":

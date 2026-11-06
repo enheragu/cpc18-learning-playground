@@ -4,7 +4,7 @@
 """
 Variance decomposition experiment: factorial (init_seed × order_seed).
 
-Trains BourginMLP on regime 2 features (BEAST + standardized), with the
+Trains one neural model (--model) on regime 2 features (BEAST + standardized), with the
 weight initialisation and the DataLoader's batch shuffle driven by
 TWO INDEPENDENT torch RNG streams:
 
@@ -70,7 +70,6 @@ _DECOMP_MODEL_REGISTRY = {
 
 # ---------------------------------------------------------------------
 # Configuration — change these to re-scope the experiment.
-# See NOTES.md §5.A for the unified sample size table across trainers.
 # ---------------------------------------------------------------------
 
 # Factorial grid size. CANONICAL = 35 × 35 = 1225 trials per model.
@@ -229,12 +228,16 @@ def main():
              for i in init_pool for o in order_pool]
     log(f"[main] First few (init, order) pairs: {tasks[:3]}")
 
+    failed = 0
     if args.workers <= 1:
         for task in tasks:
             try:
                 log(f"[main] {_runOneTrial(task)}")
             except Exception:
+                failed += 1
                 log(f"[main] task {task} crashed:\n{traceback.format_exc()}")
+        if failed:
+            raise SystemExit(f"{failed} of {len(tasks)} trials failed")
         return
 
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
@@ -243,7 +246,11 @@ def main():
             try:
                 log(f"[main] {fut.result()}")
             except Exception:
+                failed += 1
                 log(f"[main] task {futs[fut]} crashed:\n{traceback.format_exc()}")
+
+    if failed:
+        raise SystemExit(f"{failed} of {len(tasks)} trials failed")
 
 
 if __name__ == "__main__":

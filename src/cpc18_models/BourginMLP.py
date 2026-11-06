@@ -6,7 +6,7 @@ BourginMLP: replication of the MLP architecture from Bourgin et al. 2019
 ("Cognitive Model Priors for Predicting Human Decisions", ICML).
 
 3 hidden layers of (200, 275, 100) units, SReLU activations, dropout 0.15,
-sigmoid output. ~100k params dense.
+sigmoid output. 90,576 params dense.
 
 Acts as the "full model" for the ablation study (analog of CNN_14L in
 MNIST). Dropout is kept at 0.0 by default to isolate initialization
@@ -25,13 +25,8 @@ from utils.log_utils import log
 
 
 class SReLU(nn.Module):
-    """Smooth ReLU as used in Bourgin et al. 2019 (a.k.a. softplus-shifted).
-
-    Their paper does not specify the exact SReLU variant; we use the
-    common "S-shaped ReLU" approximation via two learnable thresholds.
-    For now we substitute by `nn.SiLU` (a smooth ReLU-like activation)
-    which empirically behaves similarly and is parameter-free; revisit if
-    we want to mirror Bourgin numerically.
+    """Bourgin et al. 2019 use SReLU. We substitute it by `nn.SiLU`, a smooth
+    ReLU-like activation without parameters, and keep the name of the class.
     """
 
     def __init__(self):

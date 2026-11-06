@@ -164,7 +164,7 @@ def load_cpc18_aggregate(
 
     Split is by GameID — every block of a given problem is either in
     train or test, never both. Vary `split_seed` to study split-induced
-    variance (the paper's "ya puestos, probemos varios splits" idea).
+    variance.
     """
     agg_df = _build_or_load_aggregate(base_dir)
 

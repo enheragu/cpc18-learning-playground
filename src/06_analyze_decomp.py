@@ -20,7 +20,6 @@
 """
 
 import os
-import re
 
 import path_setup  # noqa: F401
 
@@ -28,15 +27,19 @@ import numpy as np
 
 from utils.log_utils import log, logTable, bcolors
 from cpc18_utils import output_path
-from cpc18_utils.safe_yaml import fastLoadYaml
+from cpc18_utils.training_logs import loadTrainingLog
 
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_")
 _YAML_NAME = "factorial_init_order_r2_training_metrics.yaml"
 
 # Models to analyse. PsychForest and BEAST_GB are excluded by design:
 # they do not consume a DataLoader, so they have no batch-order axis.
 _DECOMP_MODELS = ("BourginMLP", "LinearLogistic", "ContextDepNet", "SparseMLP")
+
+# Seed pools of the factorial, as in 03_train_decomp.py.
+MASTER_SEED_INIT  = 20260522
+MASTER_SEED_ORDER = 99999777
+POOL_SIZE = 35
 
 analysis_path = os.path.join(os.path.dirname(output_path), "analysis_results")
 tables_path = os.path.join(analysis_path, "tables")
@@ -56,14 +59,21 @@ enable_slicing_modes           = True
 def loadTrials(model_name):
     """ Returns the per-trial entry list for one model's factorial YAML. """
     path = os.path.join(output_path, model_name, _YAML_NAME)
-    data = fastLoadYaml(path)
-    return [v for k, v in data.items()
-            if _DATE_RE.match(k) and isinstance(v, dict)]
+    return list(loadTrainingLog(path).values())
+
+
+def _inPoolOrder(seeds, master_seed):
+    """ The seeds in the order of their pool, so that M[i, i] pairs init_i with order_i. """
+    pool = np.random.default_rng(master_seed).integers(0, 2**32, size=POOL_SIZE, dtype=np.uint64)
+    ordered = [int(s) for s in pool if int(s) in seeds]
+    if len(ordered) != len(seeds):
+        raise ValueError(f"seeds outside the pool of master seed {master_seed}")
+    return ordered
 
 
 def buildGrid(trials):
     """
-        Returns (init_seeds_sorted, order_seeds_sorted, mse_matrix).
+        Returns (init_seeds, order_seeds, mse_matrix), in the order of their pools.
         mse_matrix has shape (n_init, n_order) with MSE x 100 values;
         cells with no trial are np.nan. Trials must carry 'init_seed'
         and 'order_seed' keys.
@@ -71,8 +81,8 @@ def buildGrid(trials):
     by_pair = {(int(t["init_seed"]), int(t["order_seed"])): t["mse"] * 100.0
                for t in trials
                if "init_seed" in t and "order_seed" in t and "mse" in t}
-    inits = sorted({p[0] for p in by_pair})
-    orders = sorted({p[1] for p in by_pair})
+    inits = _inPoolOrder({p[0] for p in by_pair}, MASTER_SEED_INIT)
+    orders = _inPoolOrder({p[1] for p in by_pair}, MASTER_SEED_ORDER)
     M = np.full((len(inits), len(orders)), np.nan)
     for i, s_i in enumerate(inits):
         for j, s_o in enumerate(orders):
@@ -220,8 +230,8 @@ def slicingTable(model_name, modes):
     header = ["Slicing mode", "$n$", "$\\sigma(\\mathrm{MSE} \\times 100)$"]
     rows = [header]
     label = {
-        "init_only":  "init-only (fix one order seed, vary inits)",
-        "order_only": "order-only (fix one init seed, vary orders)",
+        "init_only":  "init-only (std across inits, averaged over the fixed-order slices)",
+        "order_only": "order-only (std across orders, averaged over the fixed-init slices)",
         "init_mean":  "init-mean (vary inits, mean over orders)",
         "order_mean": "order-mean (vary orders, mean over inits)",
         "diagonal":   "diagonal (init$_i$ paired with order$_i$)",

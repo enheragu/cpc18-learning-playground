@@ -27,7 +27,6 @@
 
 import argparse
 import os
-import re
 
 import numpy as np
 from scipy.stats import spearmanr
@@ -41,10 +40,8 @@ from utils.distribution_analysis import (
 from utils.compute_switched_probability import computeSwitchedProbability
 
 from cpc18_utils import output_path
-from cpc18_utils.safe_yaml import fastLoadYaml
+from cpc18_utils.training_logs import loadTrainingLog, trainingConditions
 
-
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.\d{3}$")
 
 # The submodule misranking helper draws from the global np.random stream
 # without seeding it. We seed before each call so the Monte Carlo /
@@ -89,14 +86,12 @@ def loadMetrics(mode, regime=1):
     """
     suffix = f"{_prefixFor(mode, regime)}_training_metrics.yaml"
     out = {}
-    if not os.path.isdir(output_path):
-        return out
-    for model_name in sorted(os.listdir(output_path)):
+    for model_name in trainingConditions():
         path = os.path.join(output_path, model_name, suffix)
-        if not os.path.exists(path):
+        try:
+            trials = loadTrainingLog(path)
+        except FileNotFoundError:
             continue
-        data = fastLoadYaml(path)
-        trials = {k: v for k, v in data.items() if _DATE_RE.match(k)}
         if trials:
             out[model_name] = trials
     return out

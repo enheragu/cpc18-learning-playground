@@ -234,13 +234,17 @@ def main():
 
     tasks = _buildTaskList(shared_pool)
 
+    failed = 0
     if args.workers <= 1:
         for task in tasks:
             try:
                 msg = _runOneTrial(task)
                 log(f"[main] {msg}")
             except Exception:
+                failed += 1
                 log(f"[main] trial {task} crashed:\n{traceback.format_exc()}")
+        if failed:
+            raise SystemExit(f"{failed} of {len(tasks)} trials failed")
         return
 
     # Multi-process. Pool.map distributes each task to exactly one
@@ -252,7 +256,11 @@ def main():
             try:
                 log(f"[main] {fut.result()}")
             except Exception:
+                failed += 1
                 log(f"[main] task {futs[fut]} crashed:\n{traceback.format_exc()}")
+
+    if failed:
+        raise SystemExit(f"{failed} of {len(tasks)} trials failed")
 
 
 if __name__ == "__main__":

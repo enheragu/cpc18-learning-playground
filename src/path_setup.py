@@ -22,7 +22,8 @@ _MNIST_SRC = os.path.normpath(os.path.join(_REPO_ROOT, "mnist-learning-playgroun
 if not os.path.isdir(_MNIST_SRC):
     raise RuntimeError(
         f"mnist-learning-playground submodule not found at {_MNIST_SRC}. "
-        "Did you run `git submodule update --init`?"
+        "Run `git submodule update --init` or, from the Zenodo zip, follow the "
+        "installation section of the README."
     )
 
 if _MNIST_SRC not in sys.path:

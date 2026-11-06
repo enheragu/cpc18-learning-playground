@@ -15,7 +15,7 @@ TARGET="BEAST_GB demo code.zip"
 DEST="$HERE/$TARGET"
 
 echo "Querying OSF node $OSF_NODE for '$TARGET'..."
-URL=$(curl -s "https://api.osf.io/v2/nodes/${OSF_NODE}/files/osfstorage/?page[size]=100" \
+URL=$(curl -gs "https://api.osf.io/v2/nodes/${OSF_NODE}/files/osfstorage/?page[size]=100" \
   | python3 -c "
 import sys, json
 data = json.load(sys.stdin).get('data', [])

@@ -2,9 +2,9 @@
 # encoding: utf-8
 
 """
-LinearLogistic: single linear layer + sigmoid. Convex loss, expected to
-have very low initialization variance — used as the "near-zero variance"
-baseline in the paper, analogous to SimplePerceptron in MNIST.
+LinearLogistic: single linear layer + sigmoid. Expected to have very low
+initialization variance, so it is used as the "near-zero variance" baseline
+in the paper, analogous to SimplePerceptron in MNIST.
 """
 
 import torch

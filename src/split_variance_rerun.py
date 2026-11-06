@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 """
-§5.8 split-induced variance. The canonical 210/60 split is one realisation.
+Split-induced variance (Section 3.5 of the manuscript). The canonical 210/60
+split is one realisation.
 Here we repartition the 268 BEAST-feature problems into N random 208/60
 splits and retrain the stable models on each, with the initialisation seed
 held FIXED so the only thing that varies is the split. The BEAST features are
@@ -85,6 +86,7 @@ def main():
               f"min={a.min():.3f} max={a.max():.3f}")
     out = os.path.join(os.path.dirname(data_path), "analysis_results",
                        "split_variance.npz")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     np.savez(out, **{mn: np.array(res[mn]) for mn in MODELS})
     log(f"[split] wrote {out}")
 

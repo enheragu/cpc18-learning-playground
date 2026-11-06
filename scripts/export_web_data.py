@@ -1,29 +1,35 @@
 #!/usr/bin/env python3
 """Export CPC18 results to the mlv-tools website raw_data format.
 
-Reads the committed analysis CSVs and writes three data files the web tools
-consume:
+Reads the analysis CSVs written by `src/09_export_csv.py` and writes five
+data files the web tools consume:
 
-  cpc18_mse_data_raw.yaml      per-model repeated-run scores (replication /
-                               standardizing tools), 6 models x 800 seeds.
-  cpc18_ablation_b1_table.csv  BourginMLP batch_size x learning_rate factorial.
-  cpc18_ablation_b3_table.csv  SparseMLP epsilon x learning_rate factorial.
+  cpc18_mse_data_raw.yaml            per-model repeated-run scores (replication /
+                                     standardizing tools), 6 models x 800 seeds.
+  cpc18_ablation_b1_table.csv        BourginMLP batch_size x learning_rate factorial.
+  cpc18_ablation_b3_table.csv        SparseMLP epsilon x learning_rate factorial.
+  cpc18_variance_decomposition.json  init x order factorial: variance split,
+                                     slicing sigmas and 35x35 grid per neural model.
+  cpc18_decomp_mse_data_raw.yaml     the 1225 factorial runs of each neural model.
 
-Directionality: CPC18's metric (mse_x100) is lower-is-better. The data is
-exported with its natural POSITIVE values; the web tool flags the metric as
+Directionality: CPC18's metric (mse_x100) is lower-is-better. The first four
+files keep its natural POSITIVE values; the web tool flags the metric as
 lowerIsBetter and the shared comparison core negates internally only at the
-simulation boundary (display stays positive). So no transform is applied here.
+simulation boundary (display stays positive). The exception is
+cpc18_decomp_mse_data_raw.yaml, whose values are written negated (see
+export_decomposition).
 
 Run from the repo root:
-    python scripts/export_web_data.py [--out-dir <mlv-tools/raw_data>]
+    python scripts/export_web_data.py --out-dir <mlv-tools>/raw_data
 """
 import argparse
 import csv
 import os
 
+import numpy as np
+
 CSV_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "analysis_results", "csv")
-DEFAULT_OUT = "/home/quique/eeha/web-pages-tools/mlv-tools/raw_data"
 
 # Best-run (ascending min mse) leaderboard order; defines YAML display order.
 MODEL_ORDER = ["BEAST_GB", "BourginMLP", "ContextDepNet",
@@ -75,8 +81,8 @@ def export_ablation(out_dir, src_name, dst_name, factor_cols):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out-dir", default=DEFAULT_OUT,
-                    help="mlv-tools raw_data directory")
+    ap.add_argument("--out-dir", required=True,
+                    help="raw_data directory of a mlv-tools checkout")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -122,6 +128,10 @@ def export_decomposition(out_dir):
         m = sum(a) / n
         return (sum((x - m) ** 2 for x in a) / (n - 1)) ** 0.5
 
+    # Seed pools of the factorial, as in src/03_train_decomp.py: the diagonal pairs init_i with order_i.
+    init_pool = [int(s) for s in np.random.default_rng(20260522).integers(0, 2**32, size=35, dtype=np.uint64)]
+    order_pool = [int(s) for s in np.random.default_rng(99999777).integers(0, 2**32, size=35, dtype=np.uint64)]
+
     decomposition, slicing, grids = {}, {}, {}
     for m, cells in by_model.items():
         inits = sorted({i for i, _ in cells})
@@ -145,7 +155,7 @@ def export_decomposition(out_dir):
             "order_only": round(sum(_std(G[i]) for i in range(len(inits))) / len(inits), 3),
             "init_mean": round(_std(init_means), 3),
             "order_mean": round(_std(order_means), 3),
-            "diagonal": round(_std([G[k][k] for k in range(min(len(inits), len(orders)))]), 3),
+            "diagonal": round(_std([cells[pair] for pair in zip(init_pool, order_pool)]), 3),
             "full": round(_std(flat), 3),
         }
         grids[m] = [[round(v, 4) for v in row] for row in G]

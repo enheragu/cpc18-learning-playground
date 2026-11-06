@@ -9,8 +9,7 @@ SklearnRegressorTrainer: a parallel trainer for sklearn-style estimators
 Variance for these models comes from the estimator's own `random_state`
 (bootstrap sampling, feature subsetting, tree split randomness). We
 funnel the per-trial seed into it so the existing seed-mode machinery
-in 00_train_regime1.py / 01_train_regime2.py works identically to the
-torch models.
+in 01_train_regime2.py works identically to the torch models.
 
 Subclasses only need to implement `_build_estimator(seed)` returning a
 fitted-or-fittable sklearn-style object.

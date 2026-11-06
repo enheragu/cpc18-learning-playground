@@ -2,8 +2,8 @@
 # encoding: utf-8
 """
 Re-run a subset of seeds saving per-(test problem) squared errors, for the
-test-sampling-variance (§4.1) and which-problems-concentrate-variance (§5.7)
-analyses. Aggregate test MSE is unchanged; this only records, for each trial,
+test-sampling-variance and which-problems-concentrate-variance analyses
+(Section 3.5 of the manuscript). Aggregate test MSE is unchanged; this only records, for each trial,
 the mean squared error on each of the 60 test problems (averaged over its 5
 blocks). Output: analysis_results/perproblem_errors.npz.
 
@@ -93,6 +93,7 @@ def main():
                 log(f"[pp] {done}/{len(tasks)} done")
     out = os.path.join(os.path.dirname(data_path), "analysis_results",
                        "perproblem_errors.npz")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     np.savez(out, problems=np.array(PROBLEMS), seeds=np.array(seeds), **results)
     log(f"[pp] wrote {out}")
 

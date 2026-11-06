@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 """
-Regenerate the manuscript's numeric tables from the committed flat CSVs in
+Regenerate the manuscript's numeric tables from the flat CSVs in
 analysis_results/csv/ -- no YAML, no retraining. This is the lightweight
-reproducibility path: clone, run 09_export_csv.py once (or use the committed
-CSVs), then run this to reproduce the paper's headline numbers.
+reproducibility path: run 09_export_csv.py once, then run this to reproduce
+the paper's headline numbers.
 
-Covers: the six-model summary / reporting table (best, mean, std, P10), the
-per-model normality stats, the cross-model ICC(3,1) and Spearman matrix, the
+Covers: the six-model summary / reporting table (best, mean, std, lognormal P10
+and its check), the six- and four-model ordering misranking tables (Monte Carlo
+and Bootstrap), the per-model normality stats, the cross-model ICC(3,1) and Spearman matrix, the
 exact paired-win matrix, the B1/B3 two-way ANOVA decomposition (sum-to-zero
 contrasts), and the Phase C init x order decomposition. Figures and per-epoch
 analyses need the full per-trial data (released separately) and are produced
@@ -18,25 +19,32 @@ Run:  python 10_paper_tables.py
 
 import os
 import itertools
+from decimal import Decimal, ROUND_HALF_UP
 
 import path_setup  # noqa: F401
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr, shapiro, kurtosis
+from scipy.stats import spearmanr, shapiro, kurtosis, norm
 from statsmodels.formula.api import ols
 from statsmodels.stats.anova import anova_lm
 
-from utils.log_utils import log, bcolors
+from utils.log_utils import log, logTable, bcolors
 from cpc18_utils import output_path
 
 CSV_DIR = os.path.join(os.path.dirname(output_path), "analysis_results", "csv")
+TABLES_DIR = os.path.join(os.path.dirname(output_path), "analysis_results", "tables")
 R2_ORDER = ["LinearLogistic", "BourginMLP", "ContextDepNet",
             "SparseMLP", "PsychForest", "BEAST_GB"]
+NN_CLUSTER = ["BourginMLP", "ContextDepNet", "SparseMLP"]
 MISRANK_SEED = 20260522
+ORDERING_SIMS = 40000
+# Legacy global seed 0 (not MISRANK_SEED) is the setting that reproduces the published ordering table.
+ORDERING_SEED = 0
+ABLATION_CELLS = 9  # 3 x 3 grid of each ablation
 
 
 def _load(name):
-    return pd.read_csv(os.path.join(CSV_DIR, name))
+    return pd.read_csv(os.path.join(CSV_DIR, name), float_precision="round_trip")
 
 
 def iccThreeOne(M):
@@ -53,11 +61,15 @@ def sixModelTables():
     by = {m: df[df.model == m]["mse_x100"].values for m in R2_ORDER}
     log("\n=== Six-model summary (regime 2, BEAST features) ===", bcolors.HEADER)
     log(f"{'model':16s} {'N':>4} {'best':>7} {'mean':>7} {'std':>7} "
-        f"{'P10':>7} {'kurt':>7} {'SW p':>9}")
+        f"{'P10':>7} {'check':>6} {'kurt':>7} {'SW p':>9}")
     for m in sorted(R2_ORDER, key=lambda k: by[k].mean()):
         a = by[m]
+        # P10 of a lognormal fitted to the trials (lognorm.fit(a, floc=0) in closed form: mean and ddof=0 std of
+        # the log-values); check = share of the trials at or below it, close to 10 % when the fit holds
+        p10 = np.exp(np.log(a).mean() + norm.ppf(0.10) * np.log(a).std())
+        check = (Decimal(100 * int(np.sum(a <= p10))) / len(a)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
         log(f"{m:16s} {len(a):4d} {a.min():7.3f} {a.mean():7.3f} "
-            f"{a.std(ddof=1):7.3f} {np.percentile(a,10):7.3f} "
+            f"{a.std(ddof=1):7.3f} {p10:7.3f} {check:>5}% "
             f"{kurtosis(a):7.2f} {shapiro(a).pvalue:9.2e}")
 
     # paired matrix on shared seeds
@@ -81,6 +93,49 @@ def sixModelTables():
         log(f"{abbr[i]:7s} " + " ".join(cells))
 
 
+def _orderingSwapProbability(groups, method, n_max=5):
+    """
+        P(the order of the mean of N runs per group differs from the order of
+        the group means), for N = 1..n_max. MonteCarlo draws from
+        Normal(mean, std) of each group, Bootstrap resamples its runs.
+    """
+    reference = np.argsort([g.mean() for g in groups])
+    np.random.seed(ORDERING_SEED)
+    probabilities = []
+    for n in range(1, n_max + 1):
+        if method == "MonteCarlo":
+            draws = [np.random.normal(g.mean(), g.std(), size=(ORDERING_SIMS, n)) for g in groups]
+        else:
+            draws = [np.random.choice(g, size=(ORDERING_SIMS, n), replace=True) for g in groups]
+        means = np.column_stack([d.mean(axis=1) for d in draws])
+        # Only a strict inversion of the reference order counts: a tie is not a swap
+        probabilities.append(float(np.mean(np.any(np.diff(means[:, reference], axis=1) < 0, axis=1))))
+    return probabilities
+
+
+def orderingTables():
+    """
+        Misranking of the full leaderboard: six models, and four positions
+        with the three clustered neural networks pooled into one.
+    """
+    df = _load("results_sharedpool_r2.csv")
+    by = {m: df[df.model == m]["mse_x100"].values for m in R2_ORDER}
+    pooled = np.concatenate([by[m] for m in NN_CLUSTER])
+    settings = {
+        "six-model": [by[m] for m in R2_ORDER],
+        "four-model (NN cluster pooled)": [pooled if m == NN_CLUSTER[0] else by[m]
+                                           for m in R2_ORDER if m not in NN_CLUSTER[1:]],
+    }
+    for label, groups in settings.items():
+        log(f"\n=== Ordering misranking, {label} (mean of N vs population means) ===",
+            bcolors.HEADER)
+        mc = _orderingSwapProbability(groups, "MonteCarlo")
+        boot = _orderingSwapProbability(groups, "Bootstrap")
+        rows = [["N Samples", "P(any swap) - MonteCarlo", "P(any swap) - Bootstrap"]]
+        rows += [[n + 1, f"{mc[n]:.3f}", f"{boot[n]:.3f}"] for n in range(len(mc))]
+        logTable(rows, TABLES_DIR, f"Ordering misranking - {label}")
+
+
 def twoWayAnova(df):
     aov = anova_lm(ols("mse ~ C(f1, Sum) * C(f2, Sum)", data=df).fit(), typ=3)
     aov = aov.drop("Intercept", errors="ignore")
@@ -98,6 +153,9 @@ def ablationTables():
         f1 = f1c if f1c in df.columns else ("epsilon" if "epsilon" in df.columns else "batch_size")
         d = df.rename(columns={f1: "f1", "learning_rate": "f2"})[["f1", "f2", "mse_x100"]]
         d = d.rename(columns={"mse_x100": "mse"})
+        n_cells = d.groupby(["f1", "f2"]).ngroups
+        if n_cells != ABLATION_CELLS:
+            raise SystemExit(f"Ablation {study}: {n_cells} cells instead of {ABLATION_CELLS}")
         log(f"\n=== Ablation {study.upper()} ({lab}) two-way ANOVA (sum contrasts) ===",
             bcolors.HEADER)
         log(twoWayAnova(d).to_string())
@@ -124,7 +182,9 @@ def decompTable():
 def main():
     if not os.path.isdir(CSV_DIR):
         raise SystemExit(f"No CSVs at {CSV_DIR}. Run 09_export_csv.py first.")
+    os.makedirs(TABLES_DIR, exist_ok=True)
     sixModelTables()
+    orderingTables()
     ablationTables()
     decompTable()
     log("\nAll paper tables regenerated from CSV.", bcolors.OKGREEN)

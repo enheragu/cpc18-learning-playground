@@ -28,7 +28,7 @@ from .data import CPC18Dataset  # reuse: just wraps (X, y) arrays
 
 FEATURES_CSV_NAME = "cpc18_features.csv"
 
-# 12 raw lottery + 16 engineered (4 naive + 11 psychological insight + BEAST point) + 2 admin (block, Feedback)
+# 12 raw lottery + 17 engineered (4 naive + 12 psychological insight + BEAST point) + 2 admin (block, Feedback)
 # Of the 12 raw, two (LotShapeA / LotShapeB) are categorical and get one-hot encoded.
 _NUMERIC_RAW = ["Ha", "pHa", "La", "LotNumA",
                 "Hb", "pHb", "Lb", "LotNumB",
@@ -99,7 +99,8 @@ def _standardize(X_train: np.ndarray, X_test: np.ndarray):
 def load_cpc18_features(base_dir: str = data_path,
                         standardize: bool = True) -> CPC18FeaturesSplits:
     """Load the precomputed feature CSV and split it by the canonical
-    `Train_Test` column (Plonsky 2018: 210 train / 60 test problems).
+    `Train_Test` column (Plonsky 2018: 210 train / 60 test problems; the file
+    holds 208 train problems, without 13 and 20, as in the BEAST-GB reference).
 
     `standardize=True` (default) z-scores features using train-set
     statistics. This is scale-invariant for trees / XGBoost / linear-
@@ -108,7 +109,7 @@ def load_cpc18_features(base_dir: str = data_path,
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"Missing {path}. Run `Rscript scripts/precompute_features.R` "
-            f"once to generate it (see NOTES.md for setup)."
+            f"once to generate it (see data/README.md)."
         )
 
     df = pd.read_csv(path)

@@ -6,9 +6,9 @@
     manuscript.
 
     Three families of estimates:
-      1. Pairwise misranking P(swap): the bootstrap 95% CI half-width on
-         the estimate, given the per-cell N. With N=800 trials per model
-         this is on the order of +/- 1-2 percentage points.
+      1. Pairwise misranking P(swap), under Monte Carlo and Bootstrap: the
+         95% half-width due to the finite trial sample (trials resampled
+         with replacement), plus the simulation half-width for reference.
       2. Two-way ANOVA (B1, B3): minimum detectable partial eta^2 at
          alpha = 0.05 and power = 0.80, given the degrees of freedom of
          each effect and the observed N per cell.
@@ -21,8 +21,9 @@
         python 08_power_analysis.py
 """
 
+import importlib.util
 import os
-import re
+import tempfile
 
 import path_setup  # noqa: F401
 
@@ -32,13 +33,14 @@ from scipy.stats import f as f_dist, ncf
 from scipy.optimize import brentq
 
 from utils.log_utils import log, logTable, bcolors
+from utils.compute_switched_probability import (computeSwitchedProbabilityT,
+                                                montecarlo_samples, bootstrap_samples)
 
 from cpc18_utils import output_path
-from cpc18_utils.safe_yaml import fastLoadYaml
+from cpc18_utils.training_logs import loadTrainingLog
 from cpc18_models.ablation import B1_CLASSES, B3_CLASSES
 
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_")
 analysis_path = os.path.join(os.path.dirname(output_path), "analysis_results")
 tables_path = os.path.join(analysis_path, "tables")
 csv_path = os.path.join(analysis_path, "csv")
@@ -60,15 +62,6 @@ enable_icc_precision        = True
 # Helpers
 # ---------------------------------------------------------------------
 
-def _loadTrials(path):
-    return [v for k, v in fastLoadYaml(path).items()
-            if _DATE_RE.match(k) and isinstance(v, dict)]
-
-
-def _mseX100(trials):
-    return np.array([float(t["mse"]) * 100.0 for t in trials])
-
-
 def iccThreeOne(M):
     """
         ICC(3,1) on a (n_seeds, k_conditions) matrix. Same formula as
@@ -88,10 +81,11 @@ def iccThreeOne(M):
 def _pairedMatrix(csv_name, conditions):
     """
         Build a (n_paired_seeds, k_conditions) matrix of mse_x100 from a
-        committed CSV, keeping only seeds present for every condition.
+        flat CSV of analysis_results/csv/, keeping only seeds present for
+        every condition.
         Mirrors the paired-seed matrix construction in 10_paper_tables.py.
     """
-    df = pd.read_csv(os.path.join(csv_path, csv_name))
+    df = pd.read_csv(os.path.join(csv_path, csv_name), float_precision="round_trip")
     rows = {}
     for _, r in df.iterrows():
         rows.setdefault(int(r["seed"]), {})[r["model"]] = float(r["mse_x100"])
@@ -100,82 +94,119 @@ def _pairedMatrix(csv_name, conditions):
     return M
 
 
-def _iccFromCsv(csv_name, conditions=None):
-    """Compute ICC(3,1) and (n, k) from a committed CSV."""
+def _iccMatrix(csv_name, conditions=None, expected_k=None):
+    """Paired-seed matrix of the ICC(3,1) from a flat CSV of analysis_results/csv/."""
     if conditions is None:
         df = pd.read_csv(os.path.join(csv_path, csv_name))
         conditions = sorted(df["model"].unique())
     M = _pairedMatrix(csv_name, conditions)
-    return iccThreeOne(M), M.shape[0], M.shape[1]
+    if expected_k is not None and M.shape[1] != expected_k:
+        raise SystemExit(f"{csv_name}: {M.shape[1]} conditions instead of {expected_k}")
+    return M
 
 
 # ---------------------------------------------------------------------
-# 1. Pairwise misranking bootstrap CI
+# 1. Pairwise misranking precision (Monte Carlo and Bootstrap)
 # ---------------------------------------------------------------------
 
-def _pairwiseSwapProbBootstrap(a, b, n_per_model=1, n_boot=10000, rng=None):
+MISRANK_SIMS = 40000
+MISRANK_OUTER = 1000
+
+
+def _swapProbability(a, b, method, n_sims, rng):
     """
-        Bootstrap distribution of P(swap rank) when each of `a` and `b`
-        is averaged over `n_per_model` samples. Returns the mean estimate
-        plus the 95% CI half-width.
+        P(swap | N=1) as in computeSwitchedProbability: the reference order
+        is the best-run order (lowest raw MSE wins) and one run is drawn per
+        model, from Normal(mean, std) (MonteCarlo) or from the runs
+        themselves (Bootstrap).
     """
-    rng = rng or np.random.default_rng(0)
-    a = np.asarray(a)
-    b = np.asarray(b)
-    # Reference ordering uses BEST-RUN order, matching the headline
-    # misranking statistic (computeSwitchedProbability orders groups by
-    # np.max on negated MSE, i.e. the best/lowest raw MSE run wins).
-    # Here `a`/`b` are raw mse*100 (lower = better), so the reference
-    # winner is whichever model has the smaller minimum (best run).
-    best_better = "a" if a.min() < b.min() else "b"
-    swap_estimates = []
-    for _ in range(n_boot):
-        # Resample `n_per_model` runs per model and keep the best (lowest
-        # raw MSE) of each draw, mirroring the best-run leaderboard logic.
-        ra = rng.choice(a, size=(n_per_model,), replace=True).min()
-        rb = rng.choice(b, size=(n_per_model,), replace=True).min()
-        swapped = (best_better == "a" and ra > rb) or \
-                  (best_better == "b" and rb > ra)
-        swap_estimates.append(int(swapped))
-    swap_estimates = np.array(swap_estimates)
-    p_hat = swap_estimates.mean()
-    se = np.sqrt(p_hat * (1 - p_hat) / n_boot)
-    return p_hat, 1.96 * se
+    if method == "MonteCarlo":
+        ra = rng.normal(a.mean(), a.std(), n_sims)
+        rb = rng.normal(b.mean(), b.std(), n_sims)
+    else:
+        ra = rng.choice(a, n_sims, replace=True)
+        rb = rng.choice(b, n_sims, replace=True)
+    if a.min() < b.min():
+        return float(np.mean(ra > rb))
+    return float(np.mean(rb > ra))
+
+
+def _swapSamplingHalfWidth(a, b, method, rng):
+    """
+        Uncertainty due to the finite trial sample: resample the runs of each
+        model with replacement, recompute the estimate, and return 1.96 x SD
+        over MISRANK_OUTER replicates.
+    """
+    replicates = [_swapProbability(rng.choice(a, a.size, replace=True),
+                                   rng.choice(b, b.size, replace=True),
+                                   method, MISRANK_SIMS, rng)
+                  for _ in range(MISRANK_OUTER)]
+    return 1.96 * float(np.std(replicates, ddof=1))
+
+
+def _loadNumberedScript(filename, name):
+    """Import a numeric-prefixed entry script, which a plain import cannot handle."""
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(os.path.dirname(os.path.abspath(__file__)), filename))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _headlineSwapProbabilities(negated, a_name, b_name, seed):
+    """
+        N=1 estimates computed exactly as 02_analyze.py computes them for the
+        pair (same helper, sorted names, same seed and draw order), so the
+        point estimates equal the pairwise tables reported in the manuscript.
+        The helper's own tables go to a throwaway directory.
+    """
+    names = sorted([a_name, b_name])
+    with tempfile.TemporaryDirectory() as scratch:
+        os.makedirs(os.path.join(scratch, "tables"))
+        np.random.seed(seed)
+        mc = computeSwitchedProbabilityT(negated, names, n_simulations=montecarlo_samples,
+                                         resampling_method="MonteCarlo", analysis_path=scratch)
+        boot = computeSwitchedProbabilityT(negated, names, n_simulations=bootstrap_samples,
+                                           resampling_method="Bootstrap", analysis_path=scratch)
+    return {"MonteCarlo": float(mc[1][1]), "Bootstrap": float(boot[1][1])}
 
 
 def misrankingPrecisionTable():
     """
-        Bootstrap CI half-width on P(swap | N=1) for representative
-        model pairs. The aim is to show that the precision of the
-        estimate at N=800 is on the order of half a percentage point,
-        well below the effect sizes we report.
+        P(swap | N=1) for representative model pairs under both estimators,
+        with the 95% half-width due to the finite trial sample and, for
+        reference, the simulation half-width of MISRANK_SIMS draws.
     """
-    log("\n=== 1. Pairwise misranking: bootstrap CI precision ===",
+    log("\n=== 1. Pairwise misranking precision (Monte Carlo and Bootstrap) ===",
         color=bcolors.HEADER)
     pairs = [
         ("BourginMLP", "PsychForest"),
         ("BourginMLP", "BEAST_GB"),
         ("LinearLogistic", "BourginMLP"),
     ]
-    rows = [["Pair", "N each", "$P(\\mathrm{swap}|N{=}1)$",
-             "95% CI half-width"]]
+    rows = [["Pair", "N each", "Estimator", "$P(\\mathrm{swap}|N{=}1)$",
+             "95% half-width (trials)", "95% half-width (simulation)"]]
+    analyze = _loadNumberedScript("02_analyze.py", "analyze_02")
+    negated = analyze.negatedMseByModel(analyze.loadMetrics("shared_pool", regime=2))
     for a_name, b_name in pairs:
-        a = _mseX100(_loadTrials(os.path.join(
-            output_path, a_name,
-            "sharedpool_r2_training_metrics.yaml")))
-        b = _mseX100(_loadTrials(os.path.join(
-            output_path, b_name,
-            "sharedpool_r2_training_metrics.yaml")))
-        if len(a) == 0 or len(b) == 0:
+        if a_name not in negated or b_name not in negated:
             log(f"[skip] {a_name} or {b_name} has no trials",
                 color=bcolors.WARNING)
             continue
-        p, hw = _pairwiseSwapProbBootstrap(
-            a, b, n_per_model=1, n_boot=40000,
-            rng=np.random.default_rng(0))
-        rows.append([f"{a_name} vs {b_name}",
-                     f"{min(len(a), len(b))}",
-                     f"{p:.4f}", f"{hw:.4f}"])
+        a = -100.0 * np.asarray(negated[a_name])
+        b = -100.0 * np.asarray(negated[b_name])
+        n_each = min(len(a), len(b))
+        no_overlap = a.max() < b.min() or b.max() < a.min()
+        headline = _headlineSwapProbabilities(negated, a_name, b_name, analyze.MISRANK_SEED)
+        for method in ("MonteCarlo", "Bootstrap"):
+            p = headline[method]
+            if method == "Bootstrap" and no_overlap:
+                half_width = f"<{3 / n_each:.3f} (rule of three)"
+            else:
+                half_width = f"{_swapSamplingHalfWidth(a, b, method, np.random.default_rng(1)):.3f}"
+            simulation_half_width = 1.96 * np.sqrt(p * (1 - p) / MISRANK_SIMS)
+            rows.append([f"{a_name} vs {b_name}", f"{n_each}", method,
+                         f"{p:.3f}", half_width, f"{simulation_half_width:.4f}"])
     logTable(rows, tables_path,
              "Power analysis 1 - misranking estimate precision "
              "(95% CI half-width)")
@@ -219,7 +250,7 @@ def anovaPowerTable():
         for cls in class_list:
             path = os.path.join(output_path, cls.__name__,
                                 "sharedpool_r2_ablation_training_metrics.yaml")
-            n_per_cell.append(len(_loadTrials(path)))
+            n_per_cell.append(len(loadTrainingLog(path)))
         n_total = sum(n_per_cell)
         df_f1, df_f2, df_inter = 2, 2, 4
         df_resid = n_total - (1 + df_f1 + df_f2 + df_inter)
@@ -239,42 +270,45 @@ def anovaPowerTable():
 
 def iccStandardError(icc, n_seeds, k_cells):
     """
-        Approximate SE of ICC(3,1). See McGraw & Wong (1996). For small
-        ICC values (which is what we observe) the SE under the null is
-        a good guide for whether the estimate is distinguishable from 0.
-
-        SE(ICC) ~ sqrt( (1 - ICC^2)^2 * (1 + (k-1) * ICC)^2 /
-                         (n_seeds * (k-1)) )
+        Large-sample SE of ICC(3,1), from Fisher's variance of the intraclass correlation:
+        Var = 2 (1 - ICC)^2 (1 + (k-1) ICC)^2 / (k (k-1) (n-1)).
     """
     n = n_seeds
     k = k_cells
-    return float(np.sqrt((1 - icc**2) ** 2 * (1 + (k - 1) * icc) ** 2 /
-                         (n * (k - 1))))
+    return float(np.sqrt(2 * (1 - icc) ** 2 * (1 + (k - 1) * icc) ** 2 /
+                         (k * (k - 1) * (n - 1))))
+
+
+def iccExactCi(M, alpha=0.05):
+    """ Exact confidence interval of ICC(3,1) from F = MSr / MSe (Shrout and Fleiss, 1979). """
+    n, k = M.shape
+    gm = M.mean()
+    msr = k * ((M.mean(1) - gm) ** 2).sum() / (n - 1)
+    mse = ((M - M.mean(1, keepdims=True) - M.mean(0, keepdims=True) + gm) ** 2).sum() / ((n - 1) * (k - 1))
+    df_r, df_e = n - 1, (n - 1) * (k - 1)
+    f_low = (msr / mse) / f_dist.ppf(1 - alpha / 2, df_r, df_e)
+    f_high = (msr / mse) * f_dist.ppf(1 - alpha / 2, df_e, df_r)
+    return (f_low - 1) / (f_low + k - 1), (f_high - 1) / (f_high + k - 1)
 
 
 def iccPrecisionTable():
     log("\n=== 3. ICC precision ===", color=bcolors.HEADER)
-    rows = [["Test", "$n$ seeds", "$k$ conditions",
-             "observed ICC", "approx SE", "approx z"]]
-    # ICC values, n (paired seeds) and k (conditions) are computed at
-    # runtime from the committed analysis_results/csv files via the same
-    # iccThreeOne helper used in 02_analyze.py / 07_analyze_ablation.py /
-    # 10_paper_tables.py, so this table can never drift from the data.
-    icc_r2, n_r2, k_r2 = _iccFromCsv("results_sharedpool_r2.csv", R2_ORDER)
-    icc_b1, n_b1, k_b1 = _iccFromCsv("results_ablation_b1.csv")
-    icc_b3, n_b3, k_b3 = _iccFromCsv("results_ablation_b3.csv")
-    icc_r1, n_r1, k_r1 = _iccFromCsv("results_sharedpool_r1.csv")
+    rows = [["Test", "$n$ seeds", "$k$ conditions", "observed ICC", "95% CI (exact)", "approx SE", "approx z"]]
     observed = [
-        ("Cross-model (Regime 2)",      n_r2, k_r2, icc_r2),
-        ("B1 ablation",                 n_b1, k_b1, icc_b1),
-        ("B3 ablation",                 n_b3, k_b3, icc_b3),
-        ("Cross-model (Regime 1, raw)", n_r1, k_r1, icc_r1),
+        ("Cross-model (Regime 2)", _iccMatrix("results_sharedpool_r2.csv", R2_ORDER)),
+        ("B1 ablation", _iccMatrix("results_ablation_b1.csv", expected_k=len(B1_CLASSES))),
+        ("B3 ablation", _iccMatrix("results_ablation_b3.csv", expected_k=len(B3_CLASSES))),
     ]
-    for name, n, k, icc in observed:
+    # The exploratory first regime is only in the training logs, not in the deposit.
+    if os.path.exists(os.path.join(csv_path, "results_sharedpool_r1.csv")):
+        observed.append(("Cross-model (Regime 1, raw)", _iccMatrix("results_sharedpool_r1.csv")))
+    for name, M in observed:
+        n, k = M.shape
+        icc = iccThreeOne(M)
+        low, high = iccExactCi(M)
         se = iccStandardError(icc, n, k)
         z = icc / se if se else float("nan")
-        rows.append([name, str(n), str(k),
-                     f"{icc:+.4f}", f"{se:.4f}", f"{z:+.2f}"])
+        rows.append([name, str(n), str(k), f"{icc:+.4f}", f"[{low:+.3f}, {high:+.3f}]", f"{se:.4f}", f"{z:+.2f}"])
     logTable(rows, tables_path, "Power analysis 3 - ICC precision")
 
 

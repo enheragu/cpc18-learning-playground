@@ -1,0 +1,79 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Variance-aware evaluation of CPC18 choice prediction models: training and analysis code"
+abstract: >-
+  Training and analysis code of a variance-aware evaluation of behavioral
+  choice prediction models on the Choice Prediction Competition 2018 (CPC18).
+  It trains four neural and two tree-based models hundreds of times per
+  condition from shared seed pools, decouples weight initialization from data
+  order in a factorial design, runs two hyperparameter ablations, and repeats
+  a subset of conditions on other machines and CPU instruction-set tiers. The
+  analysis scripts compute the statistics, tables and figures of the
+  accompanying article: fitted lower-tail targets, misranking probabilities by
+  Monte Carlo and Bootstrap, variance components and cross-machine agreement.
+authors:
+  - family-names: Heredia-Aguado
+    given-names: Enrique
+    orcid: "https://orcid.org/0009-0001-7717-1428"
+    affiliation: "University Institute for Engineering Research, Miguel Hernández University"
+  - family-names: Rujano
+    given-names: Alejandro
+    orcid: "https://orcid.org/0009-0000-7581-2378"
+    affiliation: "National Distance Education University"
+  - family-names: Valiente
+    given-names: David
+    orcid: "https://orcid.org/0000-0002-2245-0542"
+    affiliation: "University Institute for Engineering Research, Miguel Hernández University"
+  - family-names: Gil
+    given-names: Arturo
+    orcid: "https://orcid.org/0000-0001-7811-8955"
+    affiliation: "University Institute for Engineering Research, Miguel Hernández University"
+repository-code: "https://github.com/enheragu/cpc18-learning-playground"
+keywords:
+  - variance-aware evaluation
+  - choice prediction
+  - CPC18
+  - training variance
+  - random seeds
+  - reproducibility
+version: 1.0.0
+license: MIT
+references:
+  - type: software
+    title: "Performance variability of neural network training on MNIST and YOLO object detection: training and analysis code"
+    authors:
+      - family-names: Heredia-Aguado
+        given-names: Enrique
+      - family-names: Rujano
+        given-names: Alejandro
+      - family-names: Valiente
+        given-names: David
+      - family-names: Gil
+        given-names: Arturo
+    version: 1.0.1
+    doi: 10.5281/zenodo.24003005
+    repository-code: "https://github.com/enheragu/mnist-learning-playground"
+    notes: "Included as a git submodule; provides the shared logging, seed control, YAML persistence and Monte Carlo / Bootstrap misranking helpers."
+  - type: data
+    title: "All raw data for CPC18: Choice prediction competition 2018"
+    authors:
+      - family-names: Plonsky
+        given-names: Ori
+      - family-names: Erev
+        given-names: Ido
+      - family-names: Ert
+        given-names: Eyal
+    publisher:
+      name: Zenodo
+    year: 2019
+    doi: 10.5281/zenodo.2571510
+  - type: software
+    title: "Predicting Human Decisions with Behavioral Theories and Machine Learning"
+    authors:
+      - family-names: Plonsky
+        given-names: Ori
+    publisher:
+      name: OSF
+    year: 2024
+    doi: 10.17605/OSF.IO/VW2SU

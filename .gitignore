@@ -7,6 +7,8 @@ __pycache__/
 *.egg-info/
 .installed.cfg
 *.egg
+.mypy_cache
+.pytest_cache
 
 # Virtual environments
 venv/
@@ -20,21 +22,26 @@ ENV/
 *.swp
 *.swo
 .DS_Store
+*.code-workspace
 
 # Project: downloaded raw data (regenerable via cpc18_utils.data)
 data/all_CPC18_raw_data.csv
 data/all_CPC18_raw_data.csv.part
 data/cpc18_aggregate.parquet
 
-# Project: training outputs (regenerable; consider releasing as artifact for paper)
+# Project: training outputs (regenerable; the per-trial results are in the
+# data deposit, see README)
 output_data/
+# Runs on other machines, one folder per machine tag (regenerable)
+output_data_*
 logs/
 
-# Project: analysis tables/figures (regenerable from output_data).
+# Project: analysis tables/figures (regenerable from output_data)
 analysis_results/*
+analysis_results_*/
 
 # Project: third-party baseline source bundles (fetched via deps/download.sh,
-# external license — commit the fetch script, not the downloaded content)
+# external license: commit the fetch script, not the downloaded content)
 deps/*
 !deps/download.sh
 
@@ -42,11 +49,10 @@ deps/*
 *.lock
 !requirements.lock
 
-# Internal working docs (not for the public repo): messy research notes
-# and the manuscript-review resolution log.
-NOTES.md
-REVIEW_LOG.md
+# Project: public data deposit built by src/16_export_zenodo.py (upload, do not commit)
+zenodo_export/
 
-.mypy_cache
-.pytest_cache
-*.code-workspace
+# Cross-machine raw results: CPU probe outputs and fetched cloud sweeps
+# (their content is in the data deposit, as probes.csv and trials.csv)
+scripts/variance_check/probe_results/
+scripts/variance_check/amd_sweep/

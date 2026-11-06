@@ -12,12 +12,15 @@ Balanced a x b, n=1, random model with sigma2_eps = 0:
   s2_B  = (MS_B - MS_AB)/a     (truncated at 0)
 Shares = each / (s2_A + s2_B + s2_AB).
 """
+import os
+
 import numpy as np
 import pandas as pd
 
 RNG = np.random.default_rng(20260710)
-dec = pd.read_csv("/home/quique/umh/cpc18-learning-playground/"
-                  "analysis_results/csv/results_factorial_decomp.csv")
+_CSV_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "analysis_results", "csv")
+dec = pd.read_csv(os.path.join(_CSV_DIR, "results_factorial_decomp.csv"), float_precision="round_trip")
 
 
 def components(gv):

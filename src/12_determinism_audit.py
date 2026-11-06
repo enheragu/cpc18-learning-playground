@@ -30,6 +30,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
+import shutil
 import tempfile
 
 import path_setup  # noqa: F401
@@ -42,7 +43,7 @@ from utils.set_seed import set_seed
 from cpc18_utils import output_path
 from cpc18_utils.features import load_cpc18_features, cpc18_features_input_size
 from cpc18_utils.data import CPC18Dataset
-from cpc18_utils.safe_yaml import fastLoadYaml
+from cpc18_utils.training_logs import loadTrainingLog
 from cpc18_models.BourginMLP import BourginMLP
 from cpc18_models.LinearLogistic import LinearLogistic
 from cpc18_models.ContextDepNet import ContextDepNet
@@ -73,11 +74,10 @@ def main():
     ok = fail = 0
     for ModelClass in MODELS:
         name = ModelClass.__name__
-        stored = fastLoadYaml(os.path.join(
+        stored = loadTrainingLog(os.path.join(
             output_path, name, "factorial_init_order_r2_training_metrics.yaml"))
         by_pair = {(int(v["init_seed"]), int(v["order_seed"])): v["mse"]
-                   for v in stored.values()
-                   if isinstance(v, dict) and "init_seed" in v}
+                   for v in stored.values() if "init_seed" in v}
         for ci, co in CELLS:
             i_seed, o_seed = int(init_pool[ci]), int(order_pool[co])
             ref = by_pair.get((i_seed, o_seed))
@@ -104,7 +104,12 @@ def main():
             print(f"{name:15s} cell({ci},{co}) rerun={mse!r} stored={ref!r} "
                   f"bit-identical={same}", flush=True)
 
+    shutil.rmtree(ckpt_dir, ignore_errors=True)
     print(f"\nRESULT: {ok} identical / {fail} mismatched of {ok + fail} cells")
+    if fail:
+        # Same seed gives the same result only on the arithmetic path of the
+        # reference machine (Appendix H of the article), so this is not always a bug.
+        raise SystemExit("Mismatches are expected on a different arithmetic path than the reference machine.")
 
 
 if __name__ == "__main__":
