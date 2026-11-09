@@ -47,6 +47,9 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.24013059
     description: "Version 1.0.0"
+  - type: doi
+    value: 10.5281/zenodo.24094132
+    description: "Version 1.1.0"
 references:
   - type: software
     title: "Performance variability of neural network training on MNIST and YOLO object detection: training and analysis code"
