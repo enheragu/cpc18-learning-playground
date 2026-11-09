@@ -5,6 +5,8 @@ them.
 
 - `cpc18_utils/`: data and feature loaders, atomic YAML wrapper, and the reader of the training logs and of the deposit.
 - `cpc18_models/`: the models and the ablation classes, described in [their own README](cpc18_models/README.md).
+- `cpc18_utils/protocol.py`: the two training protocols, `original` and `stable` (see the main [README](../README.md#-training-protocols)).
+- `cpc18_utils/stable_results.py`: the results of the stable protocol as the analysis reads them from the deposit.
 - `path_setup.py`: adds the `src/` folder of the MNIST submodule to `sys.path`.
 
 ## Experiments
@@ -15,14 +17,22 @@ the data-order dimension (master seed `99999777`).
 
 | Experiment | Script | Design | Article |
 |---|---|---|---|
-| Main run | `01_train_regime2.py` | Six models (BourginMLP, LinearLogistic, ContextDepNet, SparseMLP, PsychForest, BEAST-GB) on the BEAST feature set and the canonical CPC18 train/test split, 800 shared seeds each | Sections 1.1, 3.1, 3.2, 3.5, 4 |
-| Ablation B1 | `04_train_ablation.py --study b1` | BourginMLP, batch size {16, 32, 64} x learning rate {1e-4, 1e-3, 1e-2}, 800 seeds per cell; `--study b1x` adds the learning rate 3.16e-4 column of the grid-sensitivity check | Section 3.4 |
-| Ablation B3 | `04_train_ablation.py --study b3` | SparseMLP, target sparsity epsilon {10, 20, 40} x learning rate {1e-4, 1e-3, 1e-2}, 800 seeds per cell | Section 3.4 |
-| Init x order factorial | `03_train_decomp.py` | Weight initialization and data-shuffle order seeded from two independent RNG streams, 35 x 35 grid per neural model | Section 3.3 |
-| Validation split | `11_train_valsplit.py` | Early stopping on an internal validation split of the training problems instead of the test set, 200 seeds, BourginMLP and ContextDepNet | Section 5.5 |
-| Split variance | `split_variance_rerun.py` | 20 random re-partitions of the problems, initialization seed fixed | Section 3.5 |
-| Per-problem errors | `perproblem_rerun.py` | Squared error per test problem for the first 50 shared seeds | Section 3.5 |
-| Cross-machine | the trainers above, [`scripts/variance_check/`](../scripts/variance_check/README.md) | A subset of the main-run and ablation conditions re-run on other machines and forced CPU tiers | Section 3.6, Appendix H |
+| Main run | `01_train_regime2.py` | Six models (BourginMLP, LinearLogistic, ContextDepNet, SparseMLP, PsychForest, BEAST-GB) on the BEAST feature set and the canonical CPC18 train/test split, 800 shared seeds each | Sections 1, 3.1, 3.2, 3.4.2, 3.5, 3.6, 4, Appendices A, C, D |
+| Ablation B1 | `04_train_ablation.py --study b1` | BourginMLP, batch size {16, 32, 64} x learning rate {1e-4, 1e-3, 1e-2}, 800 seeds per cell; `--study b1x` adds the learning rate 3.16e-4 column of the grid-sensitivity check | Sections 3.3, 3.5, 3.6, Appendices C, D |
+| Ablation B3 | `04_train_ablation.py --study b3` | SparseMLP, target sparsity epsilon {10, 20, 40} x learning rate {1e-4, 1e-3, 1e-2}, 800 seeds per cell | Sections 3.3, 3.5, 3.6, Appendices C, D |
+| Init x order factorial | `03_train_decomp.py` | Weight initialization and data-shuffle order seeded from two independent RNG streams, 35 x 35 grid per neural model | Sections 3.4.1, 3.5, 3.6, Appendix B |
+| Validation split | `11_train_valsplit.py` | Early stopping on an internal validation split of the training problems instead of the test set, 200 seeds, BourginMLP and ContextDepNet | Not reported in the current version of the article |
+| Split variance | `split_variance_rerun.py` | 20 random re-partitions of the problems, initialization seed fixed | Section 3.4.2 |
+| Per-problem errors | `perproblem_rerun.py` | Squared error per test problem for the first 50 shared seeds | Section 3.4.2 |
+| Cross-machine | the trainers above, [`scripts/variance_check/`](../scripts/variance_check/README.md) | A subset of the main-run and ablation conditions re-run on other machines and forced CPU tiers | Section 3.5, Appendix D |
+
+The trainers and the two re-runs train under the original protocol by default, and under the stable one with
+`--protocol stable`, which leaves out the tree-based models and writes to `output_data_stable/`: the neural models start
+from the default initialization of PyTorch and report their test MSE at the fixed number of epochs of their configuration.
+`19_cv_epochs.py` chooses those numbers by 5-fold cross-validation on the training problems (23 configurations: the four
+neural models of the main run and every cell of the two grids, 5 folds x 10 seeds each) and writes them to
+`data/cv_epochs.csv`. Under the stable protocol, the split re-run trains the four neural models, and the per-problem
+re-run trains them for their fixed number of epochs and takes the errors of their last weights.
 
 `beast_gb_topup.py` completes the BEAST-GB trials of the main run without re-checking the other five models.
 `00_train_models.py` trains four models on the raw lottery parameters only (Regime 1); it is an exploratory experiment
@@ -30,22 +40,30 @@ not reported in the article.
 
 ## Analysis scripts
 
+The last column gives the part of the article that reports each analysis. `02` to `15` and `18_text_numbers.py` run it on
+the original protocol, which the article uses for its fragile configuration (Section 3.6) and for the replication across
+machines (Section 3.5, Appendix D). The values of the stable configuration, on which the rest of the article rests, come
+from `20_stable_numbers.py`, `21_ablation_trees_stable.py` and the `--protocol stable` modes of `05` and `17`.
+
 | Script | Output | Article |
 |---|---|---|
 | `02_analyze.py` | Cross-model Monte Carlo / Bootstrap misranking, ICC and Spearman | Section 3.2 |
-| `05_make_paper_figures.py` | Figures; `--media <latex>/media` copies only the ones the manuscript includes | all |
-| `06_analyze_decomp.py` | Sum-of-squares decomposition of the factorial and its slicing modes | Section 3.3, Appendix C |
-| `07_analyze_ablation.py` | Two-way ANOVA, ICC and misranking of the ablation grids | Section 3.4 |
-| `08_power_analysis.py` | Sample size and statistical power of the headline statistics, and the ICC with its exact interval | Appendix E |
+| `05_make_paper_figures.py` | Figures; `--media <latex>/media` copies only the ones the manuscript includes, and `--protocol stable` draws those of the stable configuration from version 1.1 of the deposit into `analysis_results/figures_stable/` | all |
+| `06_analyze_decomp.py` | Sum-of-squares decomposition of the factorial and its slicing modes | Section 3.4.1, Appendix B |
+| `07_analyze_ablation.py` | Two-way ANOVA, ICC and misranking of the ablation grids | Section 3.3 |
+| `08_power_analysis.py` | Sample size and statistical power of the headline statistics, and the ICC with its exact interval | Appendix C |
 | `09_export_csv.py` | Flat CSVs of all the results (see [Flat CSVs](#flat-csvs)) | |
 | `10_paper_tables.py` | Summary and reporting format (lognormal P10 and its check), misranking, normality, ICC, paired-win, ANOVA and decomposition tables, from the flat CSVs only | Sections 3.1 to 3.4 and 4, Appendix A |
-| `12_determinism_audit.py` | Re-trains dispersed cells of the factorial and compares the test MSE bit for bit | Section 3.3 |
-| `13_variance_components.py` | Random-effects variance components of the factorial with bootstrap CIs | Section 3.3 |
+| `12_determinism_audit.py` | Re-trains dispersed cells of the factorial and compares the test MSE bit for bit | Section 3.4.1 |
+| `13_variance_components.py` | Random-effects variance components of the factorial with bootstrap CIs | Section 3.4.1 |
 | `14_gaussian_calibration_audit.py` | Lower-tail calibration of the Gaussian fit and single-run swap probabilities | Section 3.1, Appendix A |
 | `15_parametric_family_audit.py` | Normal, lognormal, gamma and mixture fits of BourginMLP | Section 3.1, Appendix A |
-| `16_export_zenodo.py` | The data deposit; `--article` and `--code-doi` fill its citation and the DOI of the code | |
-| `17_article_tables.py` | Training-seed against test-sampling variance, reporting format, statistics at N = 400 against N = 800, training times, cross-machine summary per arithmetic path and resolution floor of P10, from the data deposit only (`--deposit`, by default `zenodo_export/`) | Sections 3.5 and 4, Appendices F and H |
+| `16_export_zenodo.py` | The data deposit; `--added-runs` gives the folder of the runs added in its version 1.1, and `--article` and `--code-doi` fill its citation and the DOI of the code | |
+| `17_article_tables.py` | Training-seed against test-sampling variance, reporting format, statistics at smaller sample sizes, training times, cross-machine summary per arithmetic path and resolution floor of P10, from the data deposit only (`--deposit`, by default `zenodo_export/`); `--protocol stable` prints those of the stable configuration, and the cross-machine tables, which stay in the original one | Sections 3.4.2 and 4, Appendices C and D |
 | `18_text_numbers.py` | Numbers quoted in the text of the article that no other script prints, one block per section, from the data deposit only (`--deposit`, by default `zenodo_export/`) | all |
+| `20_stable_numbers.py` | The numbers quoted in the text of the article in the stable configuration, one block per analysis with its own random generator, from version 1.1 of the deposit (`--deposit`), and the checks of the fragile configuration on the patience and the arithmetic path | all |
+| `21_ablation_trees_stable.py` | Sequential decision of the two ablations in the stable configuration, one sampled run per cell (Monte Carlo from a lognormal, Bootstrap, 4 x 10^4 paths): TikZ trees from batch size 16 and from epsilon 20, and the probability of reaching the best cell per start level and with the mean of N runs per cell, in `analysis_results/figures_stable/ablation_test/` | Section 3.3 |
+| `22_initial_saturation.py` | Share of the test rows with a saturated output and initial test MSE of BourginMLP before any training, under the initialization of the original protocol; needs neither the logs nor the deposit | Section 3.6 |
 
 ## Flat CSVs
 

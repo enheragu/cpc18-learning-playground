@@ -17,6 +17,13 @@ Overrides:
 
 The target is the aggregate B-rate (a probability in [0, 1]) so we use
 nn.MSELoss on a sigmoid-bounded output.
+
+Initialization (`init`): "original" keeps the initialization of each model
+(Kaiming normal in fan-out mode with zero biases, from the submodule, or the
+model's own); "pytorch_default" then draws every nn.Linear again with its
+`reset_parameters()` from a generator seeded with the same seed, and restores
+the global torch RNG afterwards, so that the data order of a trial does not
+change with the initialization.
 """
 
 import time
@@ -33,6 +40,12 @@ from models.BaseModel import BaseModelTrainer
 from utils.log_utils import log
 
 
+# Initialization schemes of the networks (constructor argument `init`).
+INIT_ORIGINAL = "original"
+INIT_PYTORCH_DEFAULT = "pytorch_default"
+INIT_SCHEMES = (INIT_ORIGINAL, INIT_PYTORCH_DEFAULT)
+
+
 class RegressionBaseModelTrainer(BaseModelTrainer):
     """Base trainer for CPC18 regression models.
 
@@ -44,8 +57,15 @@ class RegressionBaseModelTrainer(BaseModelTrainer):
     # default; subclasses or callers can override.
     batch_size = 32
 
+    # Name of the initialization that the model draws by itself, as written in
+    # the training logs and in the data deposit; subclasses with their own
+    # _initialize_weights override it.
+    original_init = "kaiming_fanout"
+
     def __init__(self, input_size, learning_rate=0.001, patience=10,
-                 device=None, output_path=""):
+                 device=None, output_path="", init=INIT_ORIGINAL):
+        if init not in INIT_SCHEMES:
+            raise ValueError(f"init must be one of {INIT_SCHEMES}, not {init!r}")
         # num_classes is unused for regression but BaseModelTrainer
         # expects it, so we pass 1.
         super().__init__(
@@ -56,12 +76,37 @@ class RegressionBaseModelTrainer(BaseModelTrainer):
             device=device,
             output_path=output_path,
         )
+        self.init_scheme = init
         # Mirror the per-epoch tracking buffers but rename for MSE.
         self.mse_each_epoch = []
         self.train_mse_each_epoch = []
         # The parent class allocates accuracy_each_epoch etc.; we leave
         # them in place (empty) so any downstream code that inspects them
         # doesn't crash, but we don't populate them.
+
+    # ---- Initialization -------------------------------------------------
+
+    @property
+    def init_name(self):
+        """Initialization actually drawn, as logged with each trial."""
+        return self.original_init if self.init_scheme == INIT_ORIGINAL else self.init_scheme
+
+    def _applyInitScheme(self, seed):
+        """Called by each network right after its own _initialize_weights.
+        With "pytorch_default", every nn.Linear draws its weights and bias
+        again with reset_parameters(), from the global generator seeded with
+        `seed`. The state of that generator is saved before and restored
+        after, so whatever draws from it next (the shuffle of a DataLoader
+        without its own generator) sees the same state as with the original
+        initialization: the data order of a seed is the same under both."""
+        if self.init_scheme == INIT_ORIGINAL:
+            return
+        state = torch.get_rng_state()
+        torch.manual_seed(seed)
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                module.reset_parameters()
+        torch.set_rng_state(state)
 
     # ---- Training -----------------------------------------------------
 

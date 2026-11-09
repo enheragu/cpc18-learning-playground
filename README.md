@@ -15,17 +15,19 @@ models in the wrong order, and how many runs it takes to reach a target error.
 <p align="center">
   <img
     src="media/mse_runs_six_models.png"
-    alt="Dot plot of the test MSE x 100 of the 800 runs of each of six models, one row per model. BEAST-GB and PsychForest form narrow clusters near 0.57 and 0.77. LinearLogistic is wider, near 0.95. ContextDepNet, BourginMLP and SparseMLP spread from about 0.65 to beyond 1.5 and overlap each other."
+    alt="Dot plot of the test MSE x 100 of the 800 runs of each of six models under the stable protocol, one row per model. BEAST-GB and PsychForest form narrow clusters near 0.57 and 0.77. ContextDepNet and SparseMLP are centered near 0.9 and LinearLogistic near 1.0. BourginMLP is the widest, from about 0.72 to 1.58, and overlaps the other three networks."
     width="75%"
   />
 </p>
 
-<p align="center"><em>Each dot is one of the 800 training runs of a model, each with a different random seed, and the black line is the median (lower is better). BourginMLP has a better best run than PsychForest, 0.654 against 0.734, yet PsychForest wins 92% of the single-run comparisons.</em></p>
+<p align="center"><em>Each dot is one of the 800 training runs of a model under the stable protocol, each with a different random seed, and the black line is the median (lower is better). ContextDepNet has a better best run than PsychForest, 0.704 against 0.734, yet PsychForest wins 97% of the single-run comparisons.</em></p>
 
-Across the six models, a leaderboard built from a single run is misranked 97% of the time. Sources of randomness can
-also interact: the interaction of initialization and data order explains 70% of the variance of BourginMLP, and about 1%
-of that of ContextDepNet and LinearLogistic. Same-seed results can change from one machine to another, while the
-distribution of the results holds.
+Across the six models, a leaderboard built from a single run is misranked 83% of the time, mostly within two nearly tied
+pairs. Data order carries 4 to 45% of the seed variance, depending on the model, and the sampling of the test problems
+contributes more uncertainty than the seed in all six. The repository also keeps the original training protocol, the
+fragile configuration of the article: there a poor initialization gives BourginMLP a heavy tail, with 70% of its variance
+in the interaction of initialization and data order, and same-seed results can change from one machine to another, while
+the distribution of the results holds.
 
 ## 📄 Article and data
 
@@ -79,7 +81,22 @@ git -C mnist-learning-playground checkout 6470629e42f1f8d3ceb7e0025b0f34aee99e39
 
 ### Regenerate the article from the data deposit
 
-No training is needed. Put the files of the deposit in `zenodo_export/` at the root of the repository, then:
+No training is needed. Put the files of the deposit, version 1.1 or later, in `zenodo_export/` at the root of the
+repository; the first four scripts below also take another folder with `--deposit`. The article rests on the stable
+configuration (see [Training protocols](#-training-protocols)):
+
+```sh
+cd src
+python 05_make_paper_figures.py --protocol stable    # Figures, to analysis_results/figures_stable/
+python 17_article_tables.py --protocol stable        # Tables computed from the deposit alone
+python 20_stable_numbers.py                          # Numbers quoted in the text
+python 21_ablation_trees_stable.py                   # Sequential decision trees of the ablations
+```
+
+The figures of the stable mode are those that differ from the original protocol. The article also reports the original
+protocol as its fragile configuration (Section 3.6) and runs on it the replication across machines (Section 3.5 and
+Appendix D), whose tables are also printed by the stable mode of `17_article_tables.py`. The figure of that replication
+and the analyses of the original protocol come from:
 
 ```sh
 cd src
@@ -96,6 +113,7 @@ python 13_variance_components.py
 python 14_gaussian_calibration_audit.py
 python 15_parametric_family_audit.py
 python 12_determinism_audit.py           # Retrains some models and compares them with the stored values
+python 22_initial_saturation.py          # Output of BourginMLP before any training
 ```
 
 Tables, figures and CSVs are written to `analysis_results/`, and several scripts also print their values.
@@ -109,7 +127,7 @@ Three things to keep in mind:
 - **The exploratory first regime is not in the deposit.** Its CSV and its row of the ICC precision table are left out.
   Those are not in the article, whose figures and tables come out the same from either source.
 - **The determinism audit depends on the machine.** The same seed gives the same result only on the arithmetic path of
-  the reference machine (Appendix H of the article), so `12_determinism_audit.py` reports mismatches, and ends with an
+  the reference machine (Appendix D of the article), so `12_determinism_audit.py` reports mismatches, and ends with an
   error, on other paths.
 
 ### Train from scratch
@@ -131,19 +149,72 @@ python perproblem_rerun.py                                # Error per test probl
 The trainers write to `output_data/`, one YAML per model and experiment. Running one again only adds the missing seeds, so
 a run can be interrupted and resumed; for parallel runs use `--workers` rather than starting it twice. The two re-runs train
 everything again and write to `analysis_results/`. The main, ablation and factorial experiments take about 93 single-core
-hours. `python 16_export_zenodo.py` rebuilds the deposit: it needs the logs and machine-information files of every machine,
-the CPU probes and the outputs of the re-runs, and it replaces a previous export only once the new one is complete.
+hours. These commands train under the original protocol; the next section adds the stable one.
+
+`python 16_export_zenodo.py --added-runs DIR` rebuilds the deposit: it needs the logs and machine-information files of
+every machine, the CPU probes, the outputs of the re-runs and, from version 1.1 of the deposit, the folder of the runs
+added in that version, as their runners logged them. It replaces a previous export only once the new one is complete, and
+`--out` writes it elsewhere, e.g. `--out ../zenodo_export_v1.1`.
+
+## 🧪 Training protocols
+
+Every trainer and re-run takes `--protocol original` (the default) or `--protocol stable`:
+
+- **original**: the protocol of release 1.0.0 and of version 1.0 of the data deposit, and the fragile configuration of
+  the article. Each network starts from its own
+  initialization (Kaiming normal in fan-out mode with zero biases, or LinearLogistic's uniform weights), and each run
+  reports the test MSE of its epoch with the lowest test MSE. Early stopping on the test curve, patience 50.
+- **stable**: the configuration on which the article rests. Each network starts from the default initialization of PyTorch for its linear layers, drawn from the
+  training seed without changing the data order of that seed, and each run reports its test MSE at a fixed number of
+  epochs per configuration, chosen by 5-fold cross-validation on the 208 training problems, never at the minimum of the
+  test curve. Early stopping on the test curve, with patience 50 (120 for LinearLogistic, so that every run reaches its
+  epoch 99), only decides when to stop. The whole curve is kept, and its minimum is logged too, as a sensitivity readout.
+
+Everything else is the same under both: architectures, optimizer, batch size and learning rate, features, split, seed
+pools, factorial design and ablation grids. PsychForest and BEAST-GB have no initialization nor epochs, so their results
+serve both protocols and they are trained only under the original one. The stable protocol writes to
+`output_data_stable/` (`output_data_stable_<TAG>/` with `CPC18_OUTPUT_TAG`), so its logs never mix with those of the
+original protocol, and its re-runs write there too. Version 1.1 of the data deposit holds both protocols, told apart by its
+`protocol` column; the analysis scripts read the original one, except `20_stable_numbers.py`,
+`21_ablation_trees_stable.py` and the `--protocol stable` mode of the figures and the tables.
+
+The fixed number of epochs of each configuration is in `data/cv_epochs.csv`, which `src/19_cv_epochs.py` writes and the
+trainers read. To train under the stable protocol:
+
+```sh
+cd src
+python 01_train_regime2.py --protocol stable --workers 6               # Main run: the 4 neural models x 800 runs
+python 04_train_ablation.py --study b1 --protocol stable --workers 6
+python 04_train_ablation.py --study b1x --protocol stable --workers 6
+python 04_train_ablation.py --study b3 --protocol stable --workers 6
+for m in BourginMLP LinearLogistic ContextDepNet SparseMLP; do
+    python 03_train_decomp.py --model $m --protocol stable --workers 6
+done
+python split_variance_rerun.py --protocol stable                       # The 4 neural models on the 20 re-splits
+python perproblem_rerun.py --protocol stable                           # Trained for their fixed number of epochs
+```
+
+To repeat the cross-validation, which took about two and a half hours on two workers of the reference machine:
+
+```sh
+python 19_cv_epochs.py --workers 2      # Validation curves, to output_data_stable/cv_epochs.jsonl (resumable)
+python 19_cv_epochs.py --summary        # data/cv_epochs.csv
+```
+
+`scripts/variance_check/protocol_check.py` retrains a sample of trials under each protocol and compares them bit for bit
+with release 1.0.0 (original protocol) and with the runs of version 1.1 of the deposit (stable protocol), and checks an
+export of the deposit against the runs it was built from.
 
 ## 🧠 Models
 
-| Model | What it is | Size | Test MSE x 100, mean ± std of 800 runs |
-|:------|:-----------|:-----|:--------------------------------------:|
-| BEAST-GB | Gradient-boosted trees, the winner of CPC18 | 978 trees | 0.570 ± 0.007 |
-| PsychForest | Random forest | 500 trees | 0.773 ± 0.013 |
-| LinearLogistic | A single linear layer, the low-variance baseline | 38 parameters | 0.953 ± 0.046 |
-| ContextDepNet | Small network, 32 and 32 units with sigmoid activations | 2,305 parameters | 1.031 ± 0.159 |
-| BourginMLP | Dense network, 200, 275 and 100 units | 90,576 parameters | 1.032 ± 0.480 |
-| SparseMLP | BourginMLP with a static sparse mask | about 22,400 active of 90,576 parameters | 1.055 ± 0.144 |
+| Model | What it is | Size | Test MSE x 100, mean ± std of 800 runs, stable protocol | Original protocol |
+|:------|:-----------|:-----|:--------------------------------------:|:--------------------------------------:|
+| BEAST-GB | Gradient-boosted trees, the winner of CPC18 | 978 trees | 0.570 ± 0.007 | 0.570 ± 0.007 |
+| PsychForest | Random forest | 500 trees | 0.773 ± 0.013 | 0.773 ± 0.013 |
+| ContextDepNet | Small network, 32 and 32 units with sigmoid activations | 2,305 parameters | 0.898 ± 0.071 | 1.031 ± 0.159 |
+| SparseMLP | BourginMLP with a static sparse mask | about 22,400 active of 90,576 parameters | 0.901 ± 0.065 | 1.055 ± 0.144 |
+| LinearLogistic | A single linear layer, the linear control | 38 parameters | 0.998 ± 0.067 | 0.953 ± 0.046 |
+| BourginMLP | Dense network, 200, 275 and 100 units | 90,576 parameters | 1.009 ± 0.122 | 1.032 ± 0.480 |
 
 [`src/cpc18_models/README.md`](src/cpc18_models/README.md) has the details of each one and how it differs from its
 published version.
@@ -163,19 +234,24 @@ published version.
 | `src/05_make_paper_figures.py` | Figures; `--media PATH` also copies the ones a LaTeX project includes. |
 | `src/09_export_csv.py`, `src/10_paper_tables.py`, `src/17_article_tables.py` | Flat CSVs and tables of the article. |
 | `src/18_text_numbers.py` | Numbers quoted in the text of the article that no other script prints. |
+| `src/20_stable_numbers.py` | The same for the article in the stable configuration, from version 1.1 of the deposit. |
+| `src/21_ablation_trees_stable.py` | Sequential decision trees of the two ablations in the stable configuration: TikZ trees and the probability of reaching the best cell. |
+| `src/22_initial_saturation.py` | Output of BourginMLP before any training under the initialization of the original protocol. |
 | `src/12_determinism_audit.py` | Retrains some cells of the factorial and compares the test MSE bit for bit. |
 | `src/14_gaussian_calibration_audit.py`, `src/15_parametric_family_audit.py` | How well the Gaussian and other families fit the lower tail. |
-| `src/16_export_zenodo.py` | Builds the public deposit from the training logs. |
-| `scripts/variance_check/` | Replication across machines. |
+| `src/16_export_zenodo.py` | Builds the public deposit from the training logs and the runs added in its version 1.1. |
+| `src/19_cv_epochs.py` | Cross-validation of the number of epochs of each configuration under the stable protocol. |
+| `scripts/variance_check/` | Replication across machines, and reproduction checks of the two protocols. |
 | `scripts/export_web_data.py` | Data files for MLV Tools. |
 | `scripts/precompute_features.R` | BEAST-derived features, from the reference code of BEAST-GB. |
-| `scripts/readme_figure.py` | Figure of this README, from the flat CSV of the main run. |
+| `scripts/readme_figure.py` | Figure of this README, from the main run of the stable protocol in the deposit. |
 
 | Folder | What it holds |
 |:-------|:--------------|
-| `data/` | The feature table, committed. The raw CPC18 data, downloaded when the first regime needs it. |
+| `data/` | The feature table and the fixed numbers of epochs of the stable protocol, committed. The raw CPC18 data, downloaded when the first regime needs it. |
 | `deps/` | Reference code of BEAST-GB, fetched by `deps/download.sh`, not committed. |
 | `output_data/`, `output_data_<TAG>/` | Training logs of the reference machine and of the others, not committed. |
+| `output_data_stable/`, `output_data_stable_<TAG>/` | Training logs and re-runs of the stable protocol, not committed. |
 | `analysis_results/` | Tables, figures and flat CSVs, not committed. |
 | `zenodo_export/` | The data deposit, not committed. |
 | `media/` | Figure of this README. |

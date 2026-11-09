@@ -10,6 +10,10 @@ Run with:
     python 04_train_ablation.py --study b1x --workers 6
     python 04_train_ablation.py --study b3 --workers 6
 
+Add `--protocol stable` to train a grid under the stable protocol
+(cpc18_utils/protocol.py), read at the cross-validated epoch of each cell;
+it writes to output_data_stable/.
+
 Each ablation condition is its own subclass (cpc18_models.ablation.py),
 so each writes to `output_data/<ClassName>/sharedpool_r2_ablation_training_metrics.yaml`.
 That guarantees no cross-condition YAML mixing.
@@ -59,10 +63,14 @@ from torch.utils.data import DataLoader
 from utils.log_utils import log
 from utils.set_seed import set_seed
 
-from cpc18_utils import output_path
+from cpc18_utils import output_path, stable_output_path
 from cpc18_utils.features import load_cpc18_features, cpc18_features_input_size
 from cpc18_utils.data import CPC18Dataset
 from cpc18_utils.safe_yaml import addTrials, atomicUpdateMetricsLogFile, fastLoadYaml
+from cpc18_utils.protocol import (
+    PROTOCOLS, PROTOCOL_ORIGINAL, PROTOCOL_STABLE, STABLE_INIT,
+    readoutEpoch, stablePatience, stableEntry,
+)
 from cpc18_models.ablation import B1_CLASSES, B1X_CLASSES, B3_CLASSES
 
 
@@ -108,8 +116,12 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.\d{3}$")
 _YAML_NAME = "sharedpool_r2_ablation_training_metrics.yaml"
 
 
-def _metricsPath(model_name: str) -> str:
-    p = os.path.join(output_path, model_name, _YAML_NAME)
+def _outputRoot(protocol: str) -> str:
+    return output_path if protocol == PROTOCOL_ORIGINAL else stable_output_path
+
+
+def _metricsPath(model_name: str, protocol: str = PROTOCOL_ORIGINAL) -> str:
+    p = os.path.join(_outputRoot(protocol), model_name, _YAML_NAME)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     return p
 
@@ -136,7 +148,7 @@ def _runOneTrial(task):
     """Worker: train ONE ablation cell with ONE seed and return its
     `run_metrics` dict. The main process is responsible for batching
     these returns into the YAML."""
-    model_name, seed, _trial_idx = task
+    model_name, seed, _trial_idx, protocol = task
 
     torch.set_num_threads(1)
     set_seed(seed)
@@ -154,17 +166,27 @@ def _runOneTrial(task):
     else:
         is_b1, study = False, "B3"
 
+    stable = protocol == PROTOCOL_STABLE
+    trial_patience = patience
+    init_kwargs = {}
+    if stable:
+        base_model = "BourginMLP" if is_b1 else "SparseMLP"
+        trial_patience = stablePatience(base_model)
+        init_kwargs = {"init": STABLE_INIT}
+        readout = readoutEpoch(base_model, bs, lr, None if is_b1 else ModelClass.epsilon)
+
     model = ModelClass(
         input_size=cpc18_features_input_size(),
         learning_rate=lr,
-        patience=patience,
+        patience=trial_patience,
         seed=seed,
-        output_path=output_path,
+        output_path=_outputRoot(protocol),
         device=device,
+        **init_kwargs,
     )
     run_metrics = model.spinTrainEval(train_loader, test_loader, num_epochs)
     for _ts, entry in run_metrics.items():
-        entry["patience"] = patience
+        entry["patience"] = trial_patience
         entry["learning_rate"] = lr
         entry["batch_size"] = bs
         entry["seed_mode"] = "shared_pool"
@@ -172,10 +194,12 @@ def _runOneTrial(task):
         entry["ablation_study"] = study
         if not is_b1:
             entry["epsilon"] = ModelClass.epsilon
+        if stable:
+            stableEntry(entry, readout, model.init_name)
     return model_name, seed, run_metrics
 
 
-def _buildTaskList(class_list, shared_pool, n_target):
+def _buildTaskList(class_list, shared_pool, n_target, protocol):
     """Precompute the work to do: idempotency-filter once per cell
     using the fast loader, before forking any workers. Workers then
     receive only (model_name, seed) pairs for trials that are actually
@@ -184,14 +208,14 @@ def _buildTaskList(class_list, shared_pool, n_target):
     total_done = 0
     total_pending = 0
     for cls in class_list:
-        done = _seedsAlreadyDone(_metricsPath(cls.__name__))
+        done = _seedsAlreadyDone(_metricsPath(cls.__name__, protocol))
         n_done_here = 0
         for k in range(n_target):
             seed = int(shared_pool[k])
             if seed in done:
                 n_done_here += 1
                 continue
-            tasks.append((cls.__name__, seed, k))
+            tasks.append((cls.__name__, seed, k, protocol))
         total_done += n_done_here
         total_pending += n_target - n_done_here
         log(f"[plan] {cls.__name__:35s} done={n_done_here:4d}/"
@@ -200,11 +224,11 @@ def _buildTaskList(class_list, shared_pool, n_target):
     return tasks
 
 
-def _flushBatch(model_name: str, buffer: dict) -> None:
+def _flushBatch(model_name: str, buffer: dict, protocol: str) -> None:
     """Write the accumulated batch for one cell to its YAML and clear."""
     if not buffer:
         return
-    atomicUpdateMetricsLogFile(buffer, _metricsPath(model_name))
+    atomicUpdateMetricsLogFile(buffer, _metricsPath(model_name, protocol))
     buffer.clear()
 
 
@@ -216,6 +240,9 @@ def main():
                          help="Comma-separated ablation class names to "
                               "restrict this run to (default: all "
                               "conditions of --study).")
+    parser.add_argument("--protocol", choices=PROTOCOLS, default=PROTOCOL_ORIGINAL,
+                        help="Training protocol (cpc18_utils/protocol.py). "
+                             "'stable' writes to output_data_stable/.")
     args = parser.parse_args()
 
     class_list = {"b1": B1_CLASSES, "b1x": B1X_CLASSES,
@@ -230,7 +257,7 @@ def main():
         class_list = [by_name[w] for w in wanted]
     n_target = N_TRIALS_BY_STUDY[args.study]
     log(f"[main] Ablation {args.study.upper()}. Conditions: {len(class_list)}. "
-        f"Trials per condition: {n_target}. "
+        f"Trials per condition: {n_target}. Protocol: {args.protocol}. "
         f"Workers: {args.workers}. Device: {device}. "
         f"Flush every: {FLUSH_EVERY} trials/cell.")
     log(f"[main] Conditions: {[c.__name__ for c in class_list]}")
@@ -246,7 +273,7 @@ def main():
     assert len(set(shared_pool.tolist())) == len(shared_pool), \
         "duplicate seed in shared pool (would silently drop a trial)"
 
-    tasks = _buildTaskList(class_list, shared_pool, n_target)
+    tasks = _buildTaskList(class_list, shared_pool, n_target, args.protocol)
     if not tasks:
         log("[main] Nothing to do.")
         return
@@ -263,7 +290,7 @@ def main():
         if pending_count[model_name] >= FLUSH_EVERY:
             log(f"[flush] {model_name}: writing batch of "
                 f"{pending_count[model_name]} trials")
-            _flushBatch(model_name, buffers[model_name])
+            _flushBatch(model_name, buffers[model_name], args.protocol)
             pending_count[model_name] = 0
 
     failed = 0
@@ -293,7 +320,7 @@ def main():
         for model_name, buf in list(buffers.items()):
             if buf:
                 log(f"[flush] {model_name}: final flush of {len(buf)} trials")
-                _flushBatch(model_name, buf)
+                _flushBatch(model_name, buf, args.protocol)
     if failed:
         raise SystemExit(f"{failed} of {len(tasks)} trials failed")
 

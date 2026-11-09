@@ -18,8 +18,16 @@
         --media, copying into a LaTeX project's media/ folder only the
         figures its .tex sources include.
 
+    With --protocol stable it draws instead, into
+    analysis_results/figures_stable/, the figures of the article in the
+    stable configuration (cpc18_utils/protocol.py) that differ from the
+    original protocol, from the data deposit (version 1.1 or later, --deposit,
+    by default zenodo_export/). The cross-machine figure belongs to the
+    original protocol and is drawn by the default mode only.
+
     Usage:
-        python 05_make_paper_figures.py [--media /path/to/latex_project/media]
+        python 05_make_paper_figures.py [--media /path/to/latex_project/media] [--out PATH]
+        python 05_make_paper_figures.py --protocol stable [--deposit PATH] [--out PATH]
 """
 
 import argparse
@@ -45,7 +53,9 @@ from utils.plot_distribution import (
 )
 from utils.plot_sampling_graph import (
     plot_all_sampling_errors, plot_all_percentile_probabilities,
+    plot_sampling_graph,
 )
+from utils.sampling_param_compute import compute_sampling_error_curve
 
 
 # `generate_interaction_plot` lives in `05_check_ablation_test.py` of the
@@ -93,8 +103,8 @@ _RC_HELPER = {
               "xtick.labelsize": 48, "ytick.labelsize": 48,
               "legend.fontsize": 44},
     # width = .95\textwidth (init x order heatmap row)
-    "wide":  {"font.size": 22, "axes.titlesize": 22, "axes.labelsize": 26,
-              "xtick.labelsize": 22, "ytick.labelsize": 22,
+    "wide":  {"font.size": 20, "axes.titlesize": 22, "axes.labelsize": 23,
+              "xtick.labelsize": 20, "ytick.labelsize": 20,
               "legend.fontsize": 18},
 }
 
@@ -305,7 +315,19 @@ def figOverlapTwoModels():
         color=bcolors.OKGREEN)
 
 
-def _plotOverlapBrokenAxis(metrics_data, out_path, y_break=11.0):
+def _fitCurve(a, grid, fit):
+    """ Density of the distribution fitted to `a` on `grid`, and its peak: a normal (mean and ddof=0 std) or a
+    lognormal (maximum likelihood with location 0: mean and ddof=0 std of the logarithms). """
+    if fit == "lognormal":
+        from scipy.stats import lognorm
+        logs = np.log(a)
+        shape, scale = logs.std(), np.exp(logs.mean())
+        return lognorm.pdf(grid, shape, scale=scale), lognorm.pdf(scale * np.exp(-shape ** 2), shape, scale=scale)
+    mean, std = a.mean(), a.std()
+    return norm.pdf(grid, mean, std), norm.pdf(mean, mean, std)
+
+
+def _plotOverlapBrokenAxis(metrics_data, out_path, y_break=11.0, fit="normal", x_quantile=98.0):
     """
         Six-model MSE distribution overlap with a broken y-axis.
 
@@ -316,14 +338,15 @@ def _plotOverlapBrokenAxis(metrics_data, out_path, y_break=11.0):
         two-panel figure (shared x): the top panel shows the tall
         spikes, the bottom panel zooms into the [0, y_break] band where
         the neural-network distributions live. Per model we draw the
-        density histogram, a fitted-normal dashed curve and a solid mean
-        line, matching the style of the submodule helper.
+        density histogram, a fitted dashed curve (normal by default,
+        lognormal with `fit="lognormal"`) and a solid mean line, matching
+        the style of the submodule helper.
     """
     names = list(metrics_data.keys())
     arrays = {n: np.asarray(metrics_data[n], dtype=float) for n in names}
     pooled = np.concatenate(list(arrays.values()))
     x_lo = float(min(a.min() for a in arrays.values())) - 0.02
-    x_hi = float(np.percentile(pooled, 98.0))
+    x_hi = float(np.percentile(pooled, x_quantile))
     bins = np.linspace(x_lo, x_hi, 60)
     grid = np.linspace(x_lo, x_hi, 400)
 
@@ -341,12 +364,12 @@ def _plotOverlapBrokenAxis(metrics_data, out_path, y_break=11.0):
             ax.hist(a, bins=bins, density=True, color=color, alpha=0.35,
                     label=label if ax is ax_bot else None)
             if std > 1e-6:
-                ax.plot(grid, norm.pdf(grid, mean, std), "--",
+                ax.plot(grid, _fitCurve(a, grid, fit)[0], "--",
                         color=color, linewidth=1.8)
             ax.axvline(mean, color=color, linewidth=2.0, alpha=0.9)
         # track the tallest histogram/curve for the top panel limit
         h, _ = np.histogram(a, bins=bins, density=True)
-        peak = max(h.max(), norm.pdf(mean, mean, std) if std > 1e-6 else 0)
+        peak = max(h.max(), _fitCurve(a, grid, fit)[1] if std > 1e-6 else 0)
         y_top_max = max(y_top_max, peak)
 
     # Broken-axis limits: bottom zooms into the NN band, top shows spikes.
@@ -398,17 +421,19 @@ def figOverlapSixModels():
         color=bcolors.OKGREEN)
 
 
-def figMseRunsSixModels():
+def figMseRunsSixModels(runs=None, axis_end=1.8, layout=None):
     """
         Test MSE x 100 of every run of the main experiment: one dot per run,
         one row per model, sorted by mean. The vertical position of a dot
         within its row is random (fixed seed) and only separates the dots.
         The solid line marks the mean, as in the other distribution figures,
         and the dashed line the median. Runs beyond the end of the axis are
-        counted, not drawn.
+        counted, not drawn. `layout` (margins of the axes) fixes where the axes
+        sit on the canvas, so that another figure drawn with the same width and
+        margins lines up with this one.
     """
-    axis_end = 1.8
-    runs = {m: np.asarray(mse100Values(loadMainR2Raw(m))) for m in model_colours}
+    if runs is None:
+        runs = {m: np.asarray(mse100Values(loadMainR2Raw(m))) for m in model_colours}
     order = sorted(runs, key=lambda m: runs[m].mean())
     rng = np.random.default_rng(_SAMPLING_SEED)
     fig, ax = plt.subplots(figsize=(7, 3.4))
@@ -426,20 +451,23 @@ def figMseRunsSixModels():
         beyond = values.size - shown.size
         if beyond:
             ax.text(axis_end + 0.02, row, f"+{beyond} runs,\nup to {values.max():.1f}",
-                    va="center", fontsize=9.5)
+                    va="center", fontsize=9)
     ax.set_yticks(range(len(order)))
     ax.set_yticklabels([_displayName(m) for m in reversed(order)])
-    ax.set_xlim(0.5, axis_end + 0.2)
+    clipped = any((v > axis_end).any() for v in runs.values())
+    ax.set_xlim(0.5, axis_end + (0.2 if clipped else 0.05))
     ax.set_xticks(np.arange(0.6, axis_end + 0.01, 0.2))
-    ax.set_xlabel(r"Test MSE $\times$ 100", fontsize=14)
-    ax.tick_params(labelsize=12)
+    ax.set_xlabel(r"Test MSE $\times$ 100", fontsize=12)
+    ax.tick_params(labelsize=10.5)
     ax.grid(axis="x", color="0.85", linewidth=0.8)
     ax.set_axisbelow(True)
-    ax.legend(loc="upper right", fontsize=11)
+    ax.legend(loc="upper right", fontsize=10)
     out_dir = os.path.join(figures_path, "introduction")
     os.makedirs(out_dir, exist_ok=True)
+    if layout:
+        fig.subplots_adjust(**layout)
     fig.savefig(os.path.join(out_dir, "plot_mse_runs_six_models.pdf"),
-                bbox_inches="tight", dpi=300)
+                bbox_inches=None if layout else "tight", dpi=300)
     plt.close(fig)
     log("[fig] wrote introduction/plot_mse_runs_six_models.pdf",
         color=bcolors.OKGREEN)
@@ -520,7 +548,7 @@ def figInformedTrainingPanels():
 
 
 # ---------------------------------------------------------------------
-# Section 3.4 - ablation grids
+# Section 3.3 - ablation grids
 # ---------------------------------------------------------------------
 
 _B1_DIRS = [
@@ -596,8 +624,8 @@ def figAblationB3():
 
 
 # ---------------------------------------------------------------------
-# Section 3.4 - ANOVA interaction plots + best-condition-per-seed bars
-# (and the Section 3.3 init x order heatmaps)
+# Section 3.3 - ANOVA interaction plots + best-condition-per-seed bars
+# (and the Section 3.4.1 init x order heatmaps)
 # (These figures are specific to this manuscript and have no MNIST
 # counterpart; we keep dedicated implementations here.)
 # ---------------------------------------------------------------------
@@ -651,14 +679,17 @@ def _runMnistInteractionPlot(df, x_var, y_var, hue_var, title, out_name):
         shutil.move(src, dst)
 
 
-def _logInteractionPlot(df, x_var, title, out_name, x_label):
+def _logInteractionPlot(df, x_var, title, out_name, x_label, yscale="log", y_max=None):
     """
         Log-y interaction plot. Replaces the MNIST linear-axis helper for
         the manuscript: with the divergent lr=1e-2 cells at MSE 15-20 a
         linear axis compresses the converged cells against the floor and
         hides both the batch-size sign reversal (B1) and the rank
         crossing (B3). Same visual grammar as the MNIST helper: jittered
-        per-trial scatter + thick per-level mean line.
+        per-trial scatter + thick per-level mean line. `yscale="linear"`
+        for grids without divergent cells (stable protocol); `y_max` ends
+        the axis there and writes, above each level, how many trials it
+        leaves out.
     """
     import numpy as np
     import matplotlib.pyplot as plt
@@ -682,7 +713,16 @@ def _logInteractionPlot(df, x_var, title, out_name, x_label):
         ax.plot(range(len(x_levels)), means, "-o", color=colour,
                 linewidth=2.5, markersize=7, zorder=3,
                 label=f"{hue:g}")
-    ax.set_yscale("log")
+    ax.set_yscale(yscale)
+    if y_max is not None:
+        y_min = df["mse"].min()
+        ax.set_ylim(y_min - 0.05 * (y_max - y_min), y_max)
+        for v in x_levels:
+            above = df[(df[x_var] == v) & (df["mse"] > y_max)]["mse"]
+            if len(above):
+                ax.text(xpos[v], 0.97 * y_max,
+                        f"+{len(above)} trial{'s' if len(above) > 1 else ''},\nup to {above.max():.1f}",
+                        ha="center", va="top", fontsize=15.5)
     ax.set_xticks(range(len(x_levels)))
     ax.set_xticklabels([str(v) for v in x_levels])
     ax.set_xlabel(x_label, fontsize=21)
@@ -725,7 +765,7 @@ def figAnovaInteractionAblationB():
         color=bcolors.OKGREEN)
 
 
-def figDecompHeatmaps():
+def figDecompHeatmaps(grids=None):
     """
         35x35 init x order heatmaps for the manuscript's variance-
         decomposition section: BourginMLP (interaction-dominated,
@@ -743,21 +783,24 @@ def figDecompHeatmaps():
     import pandas as pd
     import matplotlib.pyplot as plt
 
-    csv = os.path.join(os.path.dirname(output_path), "analysis_results",
-                       "csv", "results_factorial_decomp.csv")
-    if not os.path.exists(csv):
-        csv = os.path.join("analysis_results", "csv",
-                           "results_factorial_decomp.csv")
-    df = pd.read_csv(csv, float_precision="round_trip")
+    models = ("BourginMLP", "SparseMLP", "ContextDepNet")
+    if grids is None:
+        csv = os.path.join(os.path.dirname(output_path), "analysis_results",
+                           "csv", "results_factorial_decomp.csv")
+        if not os.path.exists(csv):
+            csv = os.path.join("analysis_results", "csv",
+                               "results_factorial_decomp.csv")
+        df = pd.read_csv(csv, float_precision="round_trip")
+        # initialization seeds in rows, order seeds in columns
+        grids = {model: df[df.model == model].pivot_table(
+            index="init_seed", columns="order_seed", values="mse_x100") for model in models}
     out_dir = os.path.join(figures_path, "variance_decomposition")
     os.makedirs(out_dir, exist_ok=True)
 
-    models = ("BourginMLP", "SparseMLP", "ContextDepNet")
     with plt.rc_context(_RC_HELPER["wide"]):
         fig, axes = plt.subplots(1, 3, figsize=(15.3, 4.8))
         for ax, model in zip(axes, models):
-            g = df[df.model == model].pivot_table(
-                index="init_seed", columns="order_seed", values="mse_x100")
+            g = grids[model]
             # Reversed map: the metric is lower-is-better, so bright must be
             # good. With plain viridis the brightest cells are the worst
             # runs, which reads backwards.
@@ -776,7 +819,7 @@ def figDecompHeatmaps():
 
 
 def figBestCellPerSeed(dirs, factor1_name, factor1_label,
-                        study_label, out_name):
+                        study_label, out_name, df=None, tick_fontsize=15):
     """
         Per-seed winner bar chart. Mirrors the block in
         `mnist-learning-playground/src/05_check_ablation_test.py` that
@@ -787,15 +830,16 @@ def figBestCellPerSeed(dirs, factor1_name, factor1_label,
         `idxmin` because MSE is lower-is-better.
     """
     import seaborn as sns
-    df = _buildAblationDataframe(dirs, factor1_name)
-    if df.empty:
-        return
-    # Add a seed column so we can group by it (paired-seed analysis).
-    seeds = []
-    for d in dirs:
-        raw = loadAblationRaw(d)
-        seeds.extend(int(t["seed"]) for t in raw.values())
-    df["seed"] = seeds
+    if df is None:
+        df = _buildAblationDataframe(dirs, factor1_name)
+        if df.empty:
+            return
+        # Add a seed column so we can group by it (paired-seed analysis).
+        seeds = []
+        for d in dirs:
+            raw = loadAblationRaw(d)
+            seeds.extend(int(t["seed"]) for t in raw.values())
+        df["seed"] = seeds
     best_per_seed = df.loc[df.groupby("seed")["mse"].idxmin()]
     counts = (best_per_seed
               .groupby([factor1_name, "learning_rate"])
@@ -803,8 +847,8 @@ def figBestCellPerSeed(dirs, factor1_name, factor1_label,
     total = df["seed"].nunique()
     counts["percentage"] = counts["count"] / total * 100
     counts["combo_label"] = counts.apply(
-        lambda row: f"{factor1_label}$=${row[factor1_name]:g}\n"
-                    rf"$\alpha=10^{{{round(np.log10(row['learning_rate']))}}}$",
+        lambda row: f"{row[factor1_name]:g}\n"
+                    rf"$10^{{{round(np.log10(row['learning_rate']))}}}$",
         axis=1,
     )
     counts = counts.sort_values(by="percentage", ascending=False)
@@ -814,10 +858,10 @@ def figBestCellPerSeed(dirs, factor1_name, factor1_label,
     sns.barplot(data=counts, x="combo_label", y="percentage",
                 palette=color_palette_list, saturation=1,   # keep the palette hex (seaborn desaturates to 0.75 by default)
                 hue="combo_label", legend=False)
-    plt.xlabel("Hyperparameter combination", fontsize=18)
-    plt.ylabel("Percentage of seeds (%)", fontsize=18)
-    plt.xticks(fontsize=15)
-    plt.yticks(fontsize=15)
+    plt.xlabel(rf"Cell: {factor1_label} (top), $\alpha$ (bottom)", fontsize=21)
+    plt.ylabel("Percentage of seeds (%)", fontsize=21)
+    plt.xticks(fontsize=tick_fontsize)
+    plt.yticks(fontsize=18)
     plt.grid(axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
     full = os.path.join(figures_path, out_name)
@@ -909,7 +953,7 @@ def figSurvivalCombined():
     )
 
 
-def figTrialsToTarget():
+def figTrialsToTarget(metrics_data=None):
     """
         Paper-styled fixed-target view: expected number of training
         trials needed to reach a given MSE x 100 target for the first
@@ -919,10 +963,11 @@ def figTrialsToTarget():
         reaches targets below its observed floor, so each curve starts
         at the model's minimum.
     """
-    metrics_data = {m: mse100Values(loadMainR2Raw(m))
-                    for m in ("LinearLogistic", "BourginMLP", "ContextDepNet",
-                              "SparseMLP", "PsychForest", "BEAST_GB")
-                    if loadMainR2Raw(m)}
+    if metrics_data is None:
+        metrics_data = {m: mse100Values(loadMainR2Raw(m))
+                        for m in ("LinearLogistic", "BourginMLP", "ContextDepNet",
+                                  "SparseMLP", "PsychForest", "BEAST_GB")
+                        if loadMainR2Raw(m)}
     out_dir = os.path.join(figures_path, "standardizing_comparisons")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -939,12 +984,12 @@ def figTrialsToTarget():
                 label=m.replace("_", "-"))
     ax.set_yscale("log")
     ax.set_xlabel(r"Target test MSE $\times\,100$ (lower is better)",
-                  fontsize=14)
+                  fontsize=16)
     ax.set_ylabel("Expected number of trials\nto first reach the target",
-                  fontsize=14)
-    ax.tick_params(labelsize=12)
+                  fontsize=16)
+    ax.tick_params(labelsize=14)
     ax.grid(which="both", alpha=0.25)
-    ax.legend(ncol=2, fontsize=12)
+    ax.legend(ncol=2, fontsize=13)
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, "trials_to_target_combined.pdf"))
     plt.close(fig)
@@ -1011,13 +1056,13 @@ def _samplingErrorCombined(metrics_data, out_dir):
 # Entry point
 
 # ---------------------------------------------------------------------
-# Section 3.6 and Appendix H - cross-machine replication
+# Section 3.5 and Appendix D - cross-machine replication
 # ---------------------------------------------------------------------
 
 # The five distinct arithmetic paths of the study, in the order used by
 # `tab:cross_machine:reporting`. Each tag is the identifier of the machine
 # in `machines.csv` of the data deposit (listed in the order of the machine
-# table of Appendix H); its trials are read from `output_data_<tag>/` or from
+# table of Appendix D); its trials are read from `output_data_<tag>/` or from
 # the deposit. The AVX512 reference row is the tree of the comparison machine
 # that is bit-identical to the reference, so all five rows are loaded the same
 # way and no row is a special case.
@@ -1057,7 +1102,7 @@ def _p10BootCi(values, n=_XMACHINE_BOOT, seed=_XMACHINE_SEED):
 
 
 def figCrossMachine():
-    """Two panels carrying the argument of Section 3.6 (figure in Appendix H).
+    """Two panels carrying the argument of Section 3.5 (figure in Appendix D).
 
     (a) Per-seed values do not transfer: reference against the AMD cell,
         one point per shared seed, with the identity line. A tight cloud
@@ -1177,7 +1222,6 @@ def figTargetFamily():
         marked against the observed distribution, so the failure is
         visible rather than only tabulated.
     """
-    from scipy.stats import lognorm
     import warnings
     warnings.filterwarnings("ignore")
 
@@ -1187,8 +1231,6 @@ def figTargetFamily():
         log("[fig] target-family: not enough trials", color=bcolors.WARNING)
         return
 
-    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(12.4, 4.8))
-
     # --- (a) estimation error against sample size -------------------
     v = vals["ContextDepNet"]
     truth = _qEmpirical(v)
@@ -1197,6 +1239,7 @@ def figTargetFamily():
     series = [("empirical percentile", _qEmpirical, c_grey, "o--"),
               ("Gaussian fit", _qNormal, c_blue, "s-"),
               ("lognormal fit", _qLognormal, c_green, "^-")]
+    errors = []
     for name, fn, colour, style in series:
         rmse = []
         for N in Ns:
@@ -1204,47 +1247,355 @@ def figTargetFamily():
             est = np.array([fn(v[i]) for i in idx])
             rel = 100 * (est / truth - 1)
             rmse.append(np.sqrt((rel ** 2).mean()))
+        errors.append((name, rmse, colour, style))
+    _drawTargetFamily(Ns, errors, vals["BourginMLP"],
+                      os.path.join(figures_path, "informed_training", "target_family.pdf"))
+
+
+def _drawTargetFamily(Ns, errors, v, out_path, x_max=None):
+    """ The two panels of figTargetFamily: (a) the `errors` of each estimator of the target against `Ns`, as
+    (name, RMSE in %, colour, style); (b) the trials `v` of a configuration whose fit does not validate, on an
+    axis that ends at their 98th percentile or at `x_max`, which also writes how many trials it leaves out. """
+    from scipy.stats import lognorm
+    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(12.4, 4.8), gridspec_kw={"width_ratios": (1, 1.4)})
+    for name, rmse, colour, style in errors:
         ax_a.plot(Ns, rmse, style, color=colour, label=name,
                   linewidth=2.0, markersize=7)
     ax_a.set_xscale("log")
     ax_a.set_xticks(Ns)
     ax_a.set_xticklabels([str(n) for n in Ns])
-    ax_a.set_xlabel("trials available", fontsize=15)
-    ax_a.set_ylabel("error of the estimated target (%)", fontsize=15)
-    ax_a.tick_params(labelsize=13)
-    ax_a.legend(fontsize=12)
+    ax_a.set_xlabel("trials available", fontsize=16.5)
+    ax_a.set_ylabel("error of the estimated target (%)", fontsize=16.5)
+    ax_a.tick_params(labelsize=14.5)
+    ax_a.legend(fontsize=13.5)
     ax_a.grid(alpha=0.25, which="both")
 
     # --- (b) the architecture whose fit does not validate ------------
-    v = vals["BourginMLP"]
     q = _qLognormal(v)
-    clip = np.percentile(v, 98)
-    ax_b.hist(v[v <= clip], bins=60, color=c_grey, alpha=0.55,
-              edgecolor="none", label="observed trials")
+    clip = np.percentile(v, 98) if x_max is None else x_max
+    _, edges, _ = ax_b.hist(v[v <= clip], bins=60, color=c_grey, alpha=0.55,
+                            edgecolor="none", label="observed trials")
+    width = edges[1] - edges[0]
     sh, lo, sc = lognorm.fit(v, floc=0)
     xs = np.linspace(v.min() * 0.8, clip, 400)
     pdf = lognorm.pdf(xs, sh, lo, sc)
     # expected count per bin: density x total trials x bin width
-    ax_b.plot(xs, pdf * len(v) * (clip - v.min()) / 60,
-              color=c_green, linewidth=2.0, label="fitted lognormal")
+    ax_b.plot(xs, pdf * len(v) * width, color=c_green, linewidth=2.0,
+              label="fitted lognormal" if x_max is None else "lognormal (all trials)")
+    if x_max is not None and (v > x_max).any():
+        # the same family without the trials beyond the axis: shows that the tail, not the scale, flattens the fit
+        kept = v[v <= x_max]
+        sh2, lo2, sc2 = lognorm.fit(kept, floc=0)
+        ax_b.plot(xs, lognorm.pdf(xs, sh2, lo2, sc2) * len(kept) * width, color=c_green, linewidth=1.8,
+                  linestyle="--", label=f"lognormal (without the {len(v) - len(kept)})")
     ax_b.axvline(q, color=c_red, linewidth=2.0, linestyle="-",
                  label=f"fitted target ({q:.3f})")
     ax_b.axvline(v.min(), color=c_darkgrey, linewidth=1.4,
                  linestyle=":", label=f"best trial ({v.min():.3f})")
-    ax_b.set_xlabel(r"MSE $\times\,100$", fontsize=15)
-    ax_b.set_ylabel("trials", fontsize=15)
-    ax_b.tick_params(labelsize=13)
-    ax_b.legend(fontsize=11)
+    if x_max is not None:
+        above = v[v > x_max]
+        if len(above):
+            ax_b.text(0.98, 0.97, f"+{len(above)} trial{'s' if len(above) > 1 else ''},\nup to {above.max():.1f}",
+                      transform=ax_b.transAxes, ha="right", va="top", fontsize=13.5)
+    ax_b.set_xlabel(r"MSE $\times\,100$", fontsize=16.5)
+    ax_b.set_ylabel("trials", fontsize=16.5)
+    ax_b.tick_params(labelsize=14.5)
+    ax_b.legend(fontsize=13, loc="upper right", bbox_to_anchor=(1.0, 0.86))
     ax_b.grid(axis="y", alpha=0.25)
 
     fig.tight_layout()
-    out_dir = os.path.join(figures_path, "informed_training")
-    os.makedirs(out_dir, exist_ok=True)
-    fig.savefig(os.path.join(out_dir, "target_family.pdf"),
-                format="pdf", bbox_inches="tight")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
-    log("[fig] wrote informed_training/target_family.pdf",
+    log(f"[fig] wrote {os.path.relpath(out_path, figures_path)}",
         color=bcolors.OKGREEN)
+
+# ---------------------------------------------------------------------
+# Stable protocol (--protocol stable): the figures of the article in the
+# stable configuration, read from the data deposit (version 1.1 or later)
+# by cpc18_utils.stable_results. Networks: their trials at the fixed epoch
+# of each configuration, on M00 and M01; tree-based models: the original
+# protocol on M00. Fitted curves are lognormal, the family of Section 3.1.
+# ---------------------------------------------------------------------
+
+_STABLE_FAMILY_SEED = 41    # resampling of the target-family panel, as for its numbers in the text
+_STABLE_FAMILY_REPS = 5000
+
+
+def _lognormalParams(v):
+    """ Maximum-likelihood lognormal with location 0: (shape, scale) from the mean and ddof=0 std of log(v). """
+    logs = np.log(np.asarray(v, dtype=float))
+    return logs.std(), np.exp(logs.mean())
+
+
+def plot_metric_lognormaldistribution(data_y, ax, color, mean=None, std=None, linestyle="--", line_scale=1.0):
+    """ Lognormal counterpart of the fitted-curve helpers of the MNIST submodule (same signature and style as
+    its Gamma one): the fitted density, and its 5th, 25th, 50th, 75th and 95th percentiles as vertical lines. """
+    from scipy.stats import lognorm
+    import seaborn as sns
+    data_y = np.asarray(data_y, dtype=float)
+    if np.any(data_y <= 0) or data_y.std() == 0:
+        return
+    shape, scale = _lognormalParams(data_y)
+    x = np.geomspace(data_y.min() * 0.9, data_y.max() * 1.05, 1000)
+    sns.lineplot(x=x, y=lognorm.pdf(x, shape, scale=scale), linestyle=linestyle, linewidth=2 * line_scale,
+                 color=color, ax=ax)
+    for pos in (0.05, 0.25, 0.5, 0.75, 0.95):
+        q = lognorm.ppf(pos, shape, scale=scale)
+        ax.vlines(x=q, ymin=0, ymax=lognorm.pdf(q, shape, scale=scale), colors=color,
+                  linewidth=(2 if pos == 0.5 else 1) * line_scale, linestyles="solid" if pos == 0.5 else ":")
+
+
+def figStableIntroMse(S):
+    """ Introduction (a): histogram of the 800 BourginMLP trials at the fixed epoch, linear axis, with the fitted
+    lognormal (dashed), the median (solid) and the 5th, 25th, 75th and 95th percentiles of the trials (dotted). """
+    from scipy.stats import lognorm
+    vals = S.mainRows("BourginMLP").mse_x100.to_numpy()
+    colour = model_colours["BourginMLP"]
+    out_dir = os.path.join(figures_path, "introduction")
+    os.makedirs(out_dir, exist_ok=True)
+    with plt.rc_context(_RC_HELPER["half"]):
+        fig, ax = plt.subplots(figsize=(14, 11))
+        x_lo, x_hi = 0.98 * vals.min(), 1.02 * vals.max()
+        bins = np.linspace(x_lo, x_hi, 61)
+        ax.hist(vals, bins=bins, color=colour, alpha=0.4, edgecolor="none",
+                label=f"BourginMLP   (n={len(vals)})")
+        shape, scale = _lognormalParams(vals)
+        grid = np.linspace(x_lo, x_hi, 600)
+        # expected trials per bin: density x trials x bin width
+        ax.plot(grid, lognorm.pdf(grid, shape, scale=scale) * len(vals) * (bins[1] - bins[0]), "--",
+                color=colour, linewidth=3, label="fitted lognormal")
+        for q in (5, 25, 50, 75, 95):
+            ax.axvline(np.percentile(vals, q), color=colour,
+                       linewidth=2 if q == 50 else 1,
+                       linestyle="solid" if q == 50 else ":")
+        ax.set_xlim(x_lo, x_hi)
+        ax.set_xlabel(r"Test MSE $\times\,100$")
+        ax.set_ylabel("Trials")
+        ax.legend(loc="upper right")
+        fig.tight_layout()
+        fig.savefig(os.path.join(out_dir, "plot_mse_BourginMLP_r2.pdf"), format="pdf")
+        plt.close(fig)
+    log("[fig] wrote introduction/plot_mse_BourginMLP_r2.pdf", color=bcolors.OKGREEN)
+
+
+def figStableTestCurves(S):
+    """ Introduction (b): test MSE x 100 after each epoch across the 800 BourginMLP trials, median and band
+    between the 5th and 95th percentiles, over the epochs that every trial reaches (the common prefix of the
+    curves, so that each epoch summarizes the same 800 trials), and the fixed epoch read. """
+    rows = S.mainRows("BourginMLP")
+    curves = S.curves()
+    trials = [curves[int(t)] for t in rows.trial_id]
+    common = min(len(c) for c in trials)
+    M = np.array([c[:common] for c in trials])
+    epochs = np.arange(1, common + 1)              # the test MSE after 1, 2, ... epochs
+    fixed = int(rows.readout_epoch.iloc[0]) + 1    # e_full of the configuration
+    colour = model_colours["BourginMLP"]
+    with plt.rc_context(_RC_HELPER["half"]):
+        fig, ax = plt.subplots(figsize=(14, 11))
+        ax.fill_between(epochs, np.percentile(M, 5, axis=0), np.percentile(M, 95, axis=0), color=colour,
+                        alpha=0.25, linewidth=0, label="5th-95th percentile")
+        ax.plot(epochs, np.median(M, axis=0), color=colour, linewidth=3, label=f"median   (n={len(M)})")
+        ax.axvline(fixed, color=c_darkgrey, linewidth=2, linestyle="--", label=f"fixed epoch ({fixed})")
+        ax.set_xlim(1, common)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(r"Test MSE $\times\,100$")
+        ax.legend(loc="upper right")
+        fig.tight_layout()
+        fig.savefig(os.path.join(figures_path, "introduction", "plot_test_curves_BourginMLP.pdf"), format="pdf")
+        plt.close(fig)
+    log(f"[fig] wrote introduction/plot_test_curves_BourginMLP.pdf (epochs 1 to {common}, common to all "
+        f"{len(M)} curves)", color=bcolors.OKGREEN)
+    return common
+
+
+def figStableOverlapPair(P, models, layout, xlim):
+    """ Histograms of two models with their fitted lognormals (dashed) and means (solid), on the canvas, margins
+    and horizontal axis of the six-model dot plot, so that the two panels can be read against each other. """
+    from scipy.stats import lognorm
+    bins = np.linspace(xlim[0], xlim[1], 70)
+    grid = np.linspace(xlim[0], xlim[1], 600)
+    fig, ax = plt.subplots(figsize=(7, 3.4))
+    for m in models:
+        v = P[m].to_numpy()
+        ax.hist(v, bins=bins, density=True, color=model_colours[m], alpha=0.35,
+                label=f"{_displayName(m)} (n={len(v)})")
+        shape, scale = _lognormalParams(v)
+        ax.plot(grid, lognorm.pdf(grid, shape, scale=scale), "--", color=model_colours[m], linewidth=1.8)
+        ax.axvline(v.mean(), color=model_colours[m], linewidth=2.0, alpha=0.9)
+    ax.set_xlim(*xlim)
+    ax.set_xticks(np.arange(0.6, xlim[1], 0.2))
+    ax.set_xlabel(r"Test MSE $\times$ 100", fontsize=12)
+    ax.set_ylabel("Density", fontsize=12)
+    ax.tick_params(labelsize=10.5)
+    ax.grid(axis="x", color="0.85", linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.legend(loc="upper right", fontsize=10)
+    fig.subplots_adjust(**layout)
+    name = "plot_mse_overlap_" + "_".join(models) + ".pdf"
+    fig.savefig(os.path.join(figures_path, "introduction", name), dpi=300)
+    plt.close(fig)
+    log(f"[fig] wrote introduction/{name}", color=bcolors.OKGREEN)
+
+
+def figStableSamplingErrorMean(P):
+    """ Standard error of the mean against the number of runs for the six models, Bootstrap, with the machinery
+    and the layout of the same figure of the MNIST study (`plot_sampling_graph`, one estimation method per figure,
+    individual curves and their average, derivative below). """
+    out_dir = os.path.join(figures_path, "strengthening_conclusions")
+    os.makedirs(os.path.join(out_dir, "tables"), exist_ok=True)
+    # The helper multiplies the metric by 100
+    entries = {m: {i: {"mse": v / 100.0} for i, v in enumerate(P[m].to_numpy())} for m in model_colours}
+    np.random.seed(_SAMPLING_SEED)
+    plot_sampling_graph(
+        metrics_data={_displayName(m): e for m, e in entries.items()},
+        analysis_path=out_dir,
+        metric="mse",
+        sampling_method="bootstrap",
+        color_list=list(model_colours.values()),
+        curve_method=compute_sampling_error_curve,
+        curve_kwargs={"parameter": "mean"},
+        title_template="Sampling error of the mean\n{method_label}",
+        y_label=r"Sampling error (MSE $\times$ 100)",
+        filename_prefix="sampling_error_mean",
+        table_title_prefix="Sampling Errors (mean)",
+        plot_derivative=True,
+    )
+    shutil.move(os.path.join(out_dir, "sampling_error_mean_bootstrap.pdf"), os.path.join(out_dir, "sampling_error_mean.pdf"))
+    log("[fig] wrote strengthening_conclusions/sampling_error_mean.pdf", color=bcolors.OKGREEN)
+
+
+def figStableBestOfN(P, n_max=80):
+    """ Expected best-of-N MSE x 100 against the budget N, per model. The expectation over N trials drawn with
+    replacement from the 800 of a model is computed exactly from the sorted trials, without simulation. """
+    Ns = np.arange(1, n_max + 1)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for m in P.columns:
+        x = np.sort(P[m].to_numpy())
+        n = len(x)
+        # P(min = x_(i)) = ((n - i + 1)^N - (n - i)^N) / n^N, i = 1..n
+        above = np.arange(n, 0, -1) / n
+        emin = [float((x * (above ** N - (above - 1 / n) ** N)).sum()) for N in Ns]
+        ax.plot(Ns, emin, label=_displayName(m), color=model_colours[m], linewidth=1.8)
+    ax.set_xlabel(r"Best-of-$N$ budget (runs per model)", fontsize=12)
+    ax.set_ylabel(r"E[best of $N$ runs], MSE $\times$ 100", fontsize=12)
+    ax.tick_params(labelsize=10.5)
+    ax.legend(fontsize=10)
+    out_dir = os.path.join(figures_path, "replication_comparison")
+    os.makedirs(out_dir, exist_ok=True)
+    fig.savefig(os.path.join(out_dir, "best_of_n.pdf"), bbox_inches="tight")
+    plt.close(fig)
+    log("[fig] wrote replication_comparison/best_of_n.pdf", color=bcolors.OKGREEN)
+
+
+def figStableTargetFamily(S, P):
+    """ Informed training: (a) error of the estimated target on ContextDepNet over subsamples without replacement
+    of its 800 trials, as for the numbers of Section 3.1; (b) the cell (B = 16, lr = 1e-2) of Ablation BourginMLP,
+    whose fit does not validate. """
+    from scipy.stats import norm as _norm
+    v = P["ContextDepNet"].to_numpy()
+    truth = np.percentile(v, 10)
+    z = _norm.ppf(_FAMILY_P)
+    rng = np.random.default_rng(_STABLE_FAMILY_SEED)
+    Ns = [5, 10, 20, 50, 100]
+    rmse = {"emp": [], "gauss": [], "logn": []}
+    for N in Ns:
+        sub = v[np.argsort(rng.random((_STABLE_FAMILY_REPS, len(v))), 1)[:, :N]]
+        logs = np.log(sub)
+        for key, est in (("emp", np.percentile(sub, 10, axis=1)),
+                         ("gauss", sub.mean(1) + z * sub.std(1, ddof=1)),
+                         ("logn", np.exp(logs.mean(1) + z * logs.std(1)))):
+            rmse[key].append(100 * np.sqrt(np.mean((est / truth - 1) ** 2)))
+    errors = [("empirical percentile", rmse["emp"], c_grey, "o--"),
+              ("Gaussian fit", rmse["gauss"], c_blue, "s-"),
+              ("lognormal fit", rmse["logn"], c_green, "^-")]
+    cells = S.cells(S.ablation("ablation_bourginmlp"))
+    # the axis ends at 1.5, the threshold of a failed trial in the text, and counts the trials beyond it
+    _drawTargetFamily(Ns, errors, cells[(16, 0.01)].to_numpy(),
+                      os.path.join(figures_path, "informed_training", "target_family.pdf"), x_max=1.5)
+    return Ns, rmse
+
+
+def _stableAblationFrame(S, experiment, factor1_name):
+    import pandas as pd
+    long = S.ablation(experiment)
+    return pd.DataFrame({factor1_name: long.f1, "learning_rate": long.lr, "mse": long.y, "seed": long.seed})
+
+
+def figStableAblationGrid(S, experiment, labels, out_name, x_max_quantile):
+    """
+        Histograms and fitted lognormals of the nine cells of an ablation, with the look of the MNIST helper
+        `plot_metric_distribution` (14 x 11 canvas, translucent density histograms, dashed fitted curve with its
+        percentiles, legend with the number of trials). Two differences: the cells share the same bins, so that a
+        heavy-tailed cell is not drawn as one bin as wide as the axis, and the legend sits above the data, inside
+        the axes, without the number of trials of each cell (the same in all). With `x_max_quantile` the axis
+        ends at that quantile of the pooled trials.
+    """
+    import seaborn as sns
+    long = S.ablation(experiment)
+    cells = [g.y.to_numpy() for _, g in long.groupby(["f1", "lr"], sort=True)]
+    pooled = np.concatenate(cells)
+    x_lo = pooled.min()
+    x_hi = np.percentile(pooled, x_max_quantile) if x_max_quantile else pooled.max()
+    width = (x_hi - x_lo) / 40
+    edges = np.arange(x_lo, pooled.max() + width, width)   # every trial inside a bin: the densities stay exact
+    with plt.rc_context(_RC_HELPER["half"]):
+        fig, ax = plt.subplots(figsize=(14, 11))
+        top = 0.0
+        for colour, label, v in zip(color_palette_list, labels, cells):
+            sns.histplot(v, bins=edges, stat="density", alpha=0.4, color=colour, edgecolor="none", ax=ax,
+                         label=label)   # every cell holds the same number of trials, given in the caption
+            plot_metric_lognormaldistribution(v, ax, colour)
+            top = max(top, np.histogram(v, bins=edges, density=True)[0].max())
+        ax.set_xlim(x_lo, x_hi)
+        ax.set_ylim(0, 1.45 * top)
+        ax.set_xlabel(r"Test MSE $\times\,100$")
+        ax.set_ylabel("Density")
+        ax.legend(loc="upper center", ncol=3, fontsize=28, columnspacing=0.8, handlelength=1.2, handletextpad=0.4)
+        fig.tight_layout()
+        out_dir = os.path.join(figures_path, "ablation_test")
+        os.makedirs(out_dir, exist_ok=True)
+        fig.savefig(os.path.join(out_dir, f"{out_name}.pdf"), format="pdf")
+        plt.close(fig)
+    log(f"[fig] wrote ablation_test/{out_name}.pdf", color=bcolors.OKGREEN)
+
+
+def runStable(deposit):
+    """ The figures of the stable article that differ from the original protocol, from the deposit. """
+    from cpc18_utils.stable_results import StableResults
+    S = StableResults(deposit)
+    P = S.main()
+    for subdir in ("introduction", "replication_comparison", "informed_training", "ablation_test", "statistics",
+                   "variance_decomposition", "standardizing_comparisons"):
+        os.makedirs(os.path.join(figures_path, subdir), exist_ok=True)
+    figStableIntroMse(S)
+    figStableTestCurves(S)
+    # Figure 2: one panel above the other at the same width, on the same axis, with every trial inside it
+    axis_end = np.ceil(10 * P.to_numpy().max()) / 10
+    layout = dict(left=0.205, right=0.985, bottom=0.16, top=0.975)
+    figStableOverlapPair(P, ("LinearLogistic", "BourginMLP"), layout, (0.5, axis_end + 0.05))
+    figMseRunsSixModels(runs={m: P[m].to_numpy() for m in model_colours}, axis_end=axis_end, layout=layout)
+    figStableBestOfN(P)
+    figStableTargetFamily(S, P)
+    figStableAblationGrid(S, "ablation_bourginmlp", _B1_LABELS, "plot_mse_B1_grid", x_max_quantile=99.0)
+    figStableAblationGrid(S, "ablation_sparsemlp", _B3_LABELS, "plot_mse_B3_grid", x_max_quantile=None)
+    b1 = _stableAblationFrame(S, "ablation_bourginmlp", "batch_size")
+    b3 = _stableAblationFrame(S, "ablation_sparsemlp", "epsilon")
+    # the tail of (B = 16, lr = 1e-2) reaches 8.9: the axis ends at the 99th percentile of the grid, rounded up
+    _logInteractionPlot(b1, x_var="batch_size", title="", out_name="interaction_plot_ablation_A.pdf",
+                        x_label="Batch size", yscale="linear", y_max=np.ceil(10 * np.percentile(b1.mse, 99)) / 10)
+    _logInteractionPlot(b3, x_var="epsilon", title="", out_name="interaction_plot_ablation_B.pdf",
+                        x_label=r"$\varepsilon$", yscale="linear")
+    log("[fig] wrote statistics/interaction_plot_ablation_A.pdf and _B.pdf (linear axis)", color=bcolors.OKGREEN)
+    # all nine cells win on some seeds: smaller tick labels, so that their two lines do not overlap
+    figBestCellPerSeed(None, factor1_name="batch_size", factor1_label="$B$", study_label="Ablation BourginMLP",
+                       out_name="ablation_test/best_cell_per_seed_A.pdf", df=b1, tick_fontsize=18)
+    figBestCellPerSeed(None, factor1_name="epsilon", factor1_label=r"$\varepsilon$",
+                       study_label="Ablation SparseMLP", out_name="ablation_test/best_cell_per_seed_B.pdf", df=b3,
+                       tick_fontsize=18)
+    figDecompHeatmaps(grids={m: S.factorial(m) for m in ("BourginMLP", "SparseMLP", "ContextDepNet")})
+    figTrialsToTarget(metrics_data={m: P[m].to_numpy() for m in P.columns})
+    figStableSamplingErrorMean(P)
 
 # ---------------------------------------------------------------------
 
@@ -1332,10 +1683,30 @@ def run():
 
 
 if __name__ == "__main__":
+    from cpc18_utils import deposit_path
+    import cpc18_utils.training_logs as _training_logs
     parser = argparse.ArgumentParser(description="Generate the manuscript figures.")
     parser.add_argument("--media", metavar="PATH",
                         help="LaTeX project media/ folder: copy there only the figures its .tex files include")
+    parser.add_argument("--protocol", choices=("original", "stable"), default="original",
+                        help="training protocol of the figures (cpc18_utils/protocol.py)")
+    parser.add_argument("--deposit", default=None, metavar="PATH",
+                        help="data deposit (default: zenodo_export/); under the original protocol it is read where "
+                             "the training logs are missing")
+    parser.add_argument("--out", default=None, metavar="PATH",
+                        help="folder of the figures (default: analysis_results/figures/, or figures_stable/ "
+                             "under the stable protocol)")
     args = parser.parse_args()
-    run()
+    if args.out:
+        figures_path = os.path.abspath(args.out)
+    elif args.protocol == "stable":
+        figures_path = os.path.join(os.path.dirname(output_path), "analysis_results", "figures_stable")
+    if args.protocol == "stable":
+        runStable(os.path.abspath(args.deposit or deposit_path))
+    else:
+        if args.deposit:
+            _training_logs.deposit_path = os.path.abspath(args.deposit)
+            _training_logs._depositTrials.cache_clear()
+        run()
     if args.media:
         copyUsedFigures(args.media)

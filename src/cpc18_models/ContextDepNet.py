@@ -27,7 +27,7 @@ training-time stochastic regularisation.
 import torch
 import torch.nn as nn
 
-from .base import RegressionBaseModelTrainer
+from .base import RegressionBaseModelTrainer, INIT_ORIGINAL
 from utils.log_utils import log
 
 
@@ -35,13 +35,14 @@ class ContextDepNet(RegressionBaseModelTrainer):
     hidden_size = 32   # 32-32 stack, as in Thomas 2024 src/context_dependant_network.py
 
     def __init__(self, input_size, learning_rate=0.001, patience=10,
-                 seed=42, output_path="", device=None):
+                 seed=42, output_path="", device=None, init=INIT_ORIGINAL):
         super().__init__(input_size, learning_rate, patience,
-                         device=device, output_path=output_path)
+                         device=device, output_path=output_path, init=init)
         self.fc1 = nn.Linear(input_size, self.hidden_size).to(self.device)
         self.fc2 = nn.Linear(self.hidden_size, self.hidden_size).to(self.device)
         self.fc3 = nn.Linear(self.hidden_size, 1).to(self.device)
         self._initialize_weights(seed)
+        self._applyInitScheme(seed)
         log(f"[{self.model_name}] Initialization complete "
             f"(hidden={self.hidden_size}, all-sigmoid).")
 

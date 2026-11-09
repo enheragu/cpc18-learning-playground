@@ -12,6 +12,19 @@ Versioning note: minor releases mark visible feature jumps; patch releases cover
 maintenance updates, including docs polish that does not change behavior. Versions prior to 1.0.0
 were reconstructed from the git history, with each tag on the last commit of its version.
 
+## [Unreleased]
+
+## [1.1.0](https://github.com/enheragu/cpc18-learning-playground/releases/tag/v1.1.0) - 2026-11-09
+
+- Feature: stable training protocol in every trainer and re-run: the default initialization of PyTorch and a test MSE read at a fixed number of epochs per configuration, chosen by cross-validation on the training problems, so that no reported value is chosen on the test set. The original protocol stays the default and still reproduces release 1.0.0.
+- Feature: under the stable protocol every run keeps its whole curves and the minimum of its test curve, so that it can also be read the way of the original protocol, and the re-runs cover the four neural models.
+- Data: version 1.1 of the data deposit adds the stable protocol and two sensitivity checks of the original one, a patience of 300 epochs and the reference machine forced to AVX2. The rows of version 1.0 keep their identifiers and values.
+- Analysis: the figures, tables and numbers of the article in the stable configuration, including the simulation of the sequential ablation decisions, are produced from version 1.1 of the deposit, and the other analyses read only its trials of the original protocol, so that the article can be regenerated under either protocol.
+- Analysis: the checks of the fragile configuration on the patience, the arithmetic path and the output of BourginMLP before any training, so that those results can also be regenerated from the repository.
+- Figures: the new figures of the stable configuration, and text sizes set for the width of the submitted article.
+- Tests: both protocols and the reading of a deposit that holds them, plus a check that retrains a sample of every experiment and compares it bit for bit with the stored results.
+- Docs: the two protocols and how to train under each, rebuild the deposit and regenerate the article; the references to the article follow its current sections and appendices, and the summary of the README comes from the stable protocol, on which the article rests.
+
 ## [1.0.0](https://github.com/enheragu/cpc18-learning-playground/releases/tag/v1.0.0) - 2026-11-06
 
 First release archived in Zenodo, so that the article *Variance-Aware Evaluation of Behavioral Choice Prediction Models: A Replication and Extension on the Choice Prediction Competition 2018* can cite a fixed version of this code. The results themselves are archived in a separate Zenodo data deposit.

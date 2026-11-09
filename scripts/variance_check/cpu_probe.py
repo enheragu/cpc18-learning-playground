@@ -9,7 +9,7 @@ dataset: *which reproducibility cell is this?* The study found that
 bit-exactness follows the arithmetic path, the kernels the machine actually
 executes, which is set by torch's CPU capability tier (AVX512 / AVX2 /
 DEFAULT) together with the BLAS dispatch, and not by the CPU model or the
-tier alone (Appendix H of the manuscript). So the probe reports the tier, the
+tier alone (Appendix D of the manuscript). So the probe reports the tier, the
 instruction set the BLAS library dispatches to, the hardware facts behind
 them, and a weight fingerprint that is bit-exact within an arithmetic path
 and diverges across paths.

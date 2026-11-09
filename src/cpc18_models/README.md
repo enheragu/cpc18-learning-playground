@@ -21,8 +21,14 @@ no input describes a person. The error is the test MSE, lower is better, usually
 
 - **Neural models** ([base.py](base.py)): Adam, MSE loss on a sigmoid output, learning rate 0.001, batch size 32, patience
   50 and up to 500 epochs in the main run (1,500 in the ablations). Early stopping and the selection of the best epoch
-  use the test MSE. The article declares this choice, and `11_train_valsplit.py` measures its effect with a validation
-  split.
+  use the test MSE. The article describes this choice as part of its fragile configuration, and `11_train_valsplit.py`
+  measures its effect with a validation split. This is the original protocol; under the stable one, the test MSE is read at a fixed epoch chosen without the
+  test set (see the main README).
+- **Initialization** (argument `init` of the neural models): `"original"`, the default, keeps the initialization of each
+  model, Kaiming normal in fan-out mode with zero biases, or uniform weights in [-0.1, 0.1] for LinearLogistic.
+  `"pytorch_default"` draws every linear layer again with its `reset_parameters()`, from the global generator seeded with
+  the training seed, and then restores that generator, so that the data order of the seed is the same as with the
+  original initialization. The stable protocol uses it.
 - **Tree-based models** ([SklearnRegressorTrainer.py](SklearnRegressorTrainer.py)): the same interface and logs, with the
   seed passed as the random state of the estimator.
 - **Ablations** ([ablation.py](ablation.py)): one subclass per cell of each grid, named after its hyperparameters, such

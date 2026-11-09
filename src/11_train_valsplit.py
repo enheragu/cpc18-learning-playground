@@ -3,7 +3,7 @@
 
 """
 Sensitivity experiment: does test-set early stopping reshape the
-across-seed MSE distribution? (Section 5.5 of the manuscript.)
+across-seed MSE distribution? (Not reported in the current version of the manuscript.)
 
 The main-run protocol early-stops and selects the best epoch on the
 TEST set (declared in Section 2.5 of the manuscript). Here we

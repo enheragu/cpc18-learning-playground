@@ -11,6 +11,12 @@ _output_dirname = f"output_data_{_tag}" if _tag else "output_data"
 output_path = os.path.normpath(os.path.join(_HERE, "..", "..", _output_dirname))
 data_path = os.path.normpath(os.path.join(_HERE, "..", "..", "data"))
 
+# Training logs of the stable protocol (`--protocol stable` of the trainers, see
+# protocol.py): output_data_stable/, or output_data_stable_<tag>/ with a tag, so
+# that they never mix with the logs of the original protocol. Created on first use.
+_stable_dirname = f"output_data_stable_{_tag}" if _tag else "output_data_stable"
+stable_output_path = os.path.normpath(os.path.join(_HERE, "..", "..", _stable_dirname))
+
 # Analysis outputs that follow the tag: analysis_results_<tag>/ when a tag is
 # set, analysis_results/ otherwise. Only the scripts that import this path
 # (07_analyze_ablation.py) follow the tag; the others write to

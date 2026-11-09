@@ -5,9 +5,14 @@ the Choice Prediction Competition 2018 (CPC18), with the lottery parameters, the
 rate `B_rate`, the BEAST-derived features, the BEAST prediction and the canonical `Train_Test` split
 column.
 
+`cv_epochs.csv` holds the number of epochs whose test MSE the stable training protocol reports, one row per configuration
+(model, batch size, learning rate and, for SparseMLP, sparsity epsilon). `src/19_cv_epochs.py` chooses them by 5-fold
+cross-validation on the 208 training problems, without the test problems, and the trainers read them; its columns are
+described in that script and in the README of the data deposit, which also holds the validation curves behind it.
+
 ## License
 
-Unlike the code of this repository (MIT License, see [`../LICENSE`](../LICENSE)), this file is
+Unlike the code of this repository (MIT License, see [`../LICENSE`](../LICENSE)), `cpc18_features.csv` is
 distributed under the Creative Commons Attribution 4.0 International licence (CC BY 4.0). It is
 derived from the CPC18 data of Plonsky, Erev and Ert, "All raw data for CPC18: Choice prediction
 competition 2018", Zenodo,

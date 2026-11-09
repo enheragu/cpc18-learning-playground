@@ -20,7 +20,7 @@ Reference: Bourgin et al., ICML 2019, Table 2 (Choices13k) and Table 1
 import torch
 import torch.nn as nn
 
-from .base import RegressionBaseModelTrainer
+from .base import RegressionBaseModelTrainer, INIT_ORIGINAL
 from utils.log_utils import log
 
 
@@ -42,9 +42,9 @@ class BourginMLP(RegressionBaseModelTrainer):
     dropout_rate = 0.0   # set to 0.15 to follow Bourgin literally
 
     def __init__(self, input_size, learning_rate=0.001, patience=10,
-                 seed=42, output_path="", device=None):
+                 seed=42, output_path="", device=None, init=INIT_ORIGINAL):
         super().__init__(input_size, learning_rate, patience,
-                         device=device, output_path=output_path)
+                         device=device, output_path=output_path, init=init)
         h1, h2, h3 = self.hidden_sizes
         self.fc1 = nn.Linear(input_size, h1).to(self.device)
         self.fc2 = nn.Linear(h1, h2).to(self.device)
@@ -53,6 +53,7 @@ class BourginMLP(RegressionBaseModelTrainer):
         self.act = SReLU()
         self.dropout = nn.Dropout(self.dropout_rate)
         self._initialize_weights(seed)
+        self._applyInitScheme(seed)
         log(f"[{self.model_name}] Initialization complete "
             f"(hidden={self.hidden_sizes}, dropout={self.dropout_rate}).")
 

@@ -18,6 +18,11 @@ criterion; and the fields that the deposit does not hold are absent (per-epoch
 curves, `seed_mode`, `protocol`, `seed_decomposed`, `total_epochs`, and the
 batch size, learning rate and patience of the tree-based models, which use none
 of them). The exploratory first regime is not in the deposit.
+
+From version 1.1 the deposit also holds the trials of the stable protocol and of
+the patience-300 runs (column `protocol`). The training logs read here are those
+of the original protocol, so only its rows are served; a deposit without that
+column (version 1.0) holds no other.
 """
 
 import csv
@@ -31,6 +36,7 @@ from cpc18_utils.safe_yaml import fastLoadYaml
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_")
 _REFERENCE_MACHINE = "M00"  # machine of output_data/, the tree without a tag
+_ORIGINAL_PROTOCOL = "original"  # protocol of the training logs (cpc18_utils/protocol.py)
 _TREE_PREFIX = "output_data_"
 
 # Experiments of the deposit held by each training log.
@@ -88,6 +94,8 @@ def _depositTrials():
     # The csv module and float() keep the exact value of every number written in the file.
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
+            if row.get("protocol") not in (None, "", _ORIGINAL_PROTOCOL):
+                continue
             trial = {name: cast(row[field]) for field, (name, cast) in _TRIAL_FIELDS.items() if row[field]}
             key = (row["machine_id"], row["experiment"], row["condition"])
             trials.setdefault(key, {})[row["trial_id"]] = trial

@@ -127,3 +127,27 @@ def test_trials_ending_in_the_same_millisecond_are_kept(tmp_path):
     assert "2026-07-22_18-13-01.000" in stored
 
     assert len(addTrials({key: {"seed": 1}}, {key: {"seed": 1}})) == 1
+
+
+def test_only_the_original_protocol_is_served_from_a_later_deposit(tmp_path, monkeypatch):
+    """ A deposit of version 1.1 also holds stable and patience-300 rows: the logs are those of the original one. """
+    deposit = tmp_path / "zenodo_export"
+    deposit.mkdir()
+    fields = FIELDS + ["protocol", "init", "readout_epoch", "mse_x100_testmin"]
+    rows = [_row(1, "main", "M00", "BourginMLP", seed=7, mse="0.1", protocol="original"),
+            _row(2, "main", "M00", "BourginMLP", seed=7, mse_x100="0.9", protocol="stable"),
+            _row(3, "main", "M00", "BourginMLP", seed=7, mse_x100="0.8", protocol="original_patience300")]
+    with open(deposit / "trials.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    import cpc18_utils
+    import cpc18_utils.training_logs as module
+    monkeypatch.setattr(cpc18_utils, "output_path", str(tmp_path / "output_data"))
+    monkeypatch.setattr(cpc18_utils, "deposit_path", str(deposit))
+    importlib.reload(module)
+    try:
+        assert list(module.loadTrainingLog(str(tmp_path / "output_data" / "BourginMLP" / LOG_MAIN))) == ["1"]
+    finally:
+        monkeypatch.undo()
+        importlib.reload(module)

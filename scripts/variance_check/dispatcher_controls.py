@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 """
-Controls on the two CPU dispatchers of the pipeline (Appendix H of the manuscript):
+Controls on the two CPU dispatchers of the pipeline (Appendix D of the manuscript):
 the one inside torch (ATen, set with ATEN_CPU_CAPABILITY) and the one inside MKL
 (the GEMM behind nn.Linear, set with MKL_ENABLE_INSTRUCTIONS). It answers:
 

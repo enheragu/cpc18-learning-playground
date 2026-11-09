@@ -1,8 +1,8 @@
 # Replication across machines
 
-The cross-machine experiment asks whether the conclusions survive a re-run outside the controlled environment. Per-run
-values do not transfer between arithmetic paths, while the distributional statistics do (Section 3.6 and Appendix H of
-the article).
+The cross-machine experiment asks whether the conclusions survive a re-run outside the controlled environment. Under the
+original protocol, per-run values do not transfer between arithmetic paths, while the distributional statistics do
+(Section 3.5 and Appendix D of the article).
 
 | Script | What it answers |
 |---|---|
@@ -13,6 +13,7 @@ the article).
 | `paired_equivalence.py` | Seed-paired differences, Wilcoxon and TOST equivalence against the reference |
 | `dispatcher_controls.py` | Do the effects of the two CPU dispatchers separate when varied one at a time? Needs an Intel machine with AVX-512; its results are in `dispatcher_controls.csv` |
 | `kaggle/` | Runs the probe and a full sweep in public cloud sessions |
+| `protocol_check.py` | Do the trainers reproduce the stored results under both training protocols, and does an export of the deposit hold exactly the logged runs? |
 
 ## Results of each machine
 
@@ -23,7 +24,7 @@ the analysis scripts, only `07_analyze_ablation.py` follows the tag and writes t
 the reference machine.
 
 The tags used for the article are the identifiers of `machines.csv` in the data deposit, listed in the order of the
-machine table of Appendix H: `M01` to `M06`, `C02`, and `M01-forced-AVX2`-style names for the forced-tier runs. The
+machine table of Appendix D: `M01` to `M06`, `C02`, and `M01-forced-AVX2`-style names for the forced-tier runs. The
 reference machine, `M00`, uses `output_data/` without a tag. For example, from the root of the repository (`07` needs both
 ablation grids):
 
@@ -55,3 +56,20 @@ pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
 
 The reference machine reproduces bit for bit the trials of the two other `AVX512` machines, which use the CPU-only
 package.
+
+## Reproduction of the two training protocols
+
+`protocol_check.py train --runs DIR` retrains, with the trainers and re-runs of `src/`, a sample of trials of every
+experiment under the stable protocol (main run, factorial design, both ablation grids, LinearLogistic, per-problem errors
+and re-splits) and compares them with the runs added in version 1.1 of the deposit, as their runners logged them in
+`DIR`: the test MSE at the fixed epoch, the common part of the test and training curves and, with the same patience, the
+minimum of the test curve and the number of epochs. It also retrains trials of the original protocol and compares them bit
+for bit with version 1.0 of the deposit (`--base`, by default `zenodo_export/`). The sample takes about a minute on three
+workers of the reference machine, and the bit-for-bit comparison holds on its arithmetic path; the trials logged by `M01`
+are reproduced there too.
+
+`protocol_check.py export --runs DIR` checks an export of version 1.1 (`--deposit`, by default `zenodo_export_v1.1/`)
+against version 1.0 and the logged runs: the rows and files of version 1.0 unchanged, the rows added per protocol,
+experiment, condition and machine, no seed twice in a condition, every added value and curve equal to its logged trial,
+and the re-runs and the cross-validation. It matches the logged runs from their own fields, independently of the
+inventory of `src/16_export_zenodo.py`.

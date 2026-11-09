@@ -108,7 +108,7 @@ def main():
     print(f"\nRESULT: {ok} identical / {fail} mismatched of {ok + fail} cells")
     if fail:
         # Same seed gives the same result only on the arithmetic path of the
-        # reference machine (Appendix H of the article), so this is not always a bug.
+        # reference machine (Appendix D of the article), so this is not always a bug.
         raise SystemExit("Mismatches are expected on a different arithmetic path than the reference machine.")
 
 

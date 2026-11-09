@@ -91,7 +91,7 @@ for _eps in B3_EPSILONS:
 # One extra learning-rate level at the log-midpoint of the two converged
 # B1 levels (10^-3.5 ~= 3.16e-4), so that {1e-4, 3.16e-4, 1e-3} x
 # {16, 32, 64} forms an all-converged 3x3 grid of the same size as the
-# published B1 grid ("Sensitivity to the grid", Section 3.4 of the manuscript).
+# published B1 grid (sensitivity to the grid, Section 3.3.4 of the manuscript).
 # ---------------------------------------------------------------------
 
 B1X_LEARNING_RATES = (3.16e-4,)

@@ -49,9 +49,12 @@ deps/*
 *.lock
 !requirements.lock
 
-# Project: public data deposit built by src/16_export_zenodo.py (upload, do not commit)
+# Project: public data deposit built by src/16_export_zenodo.py (upload, do not commit),
+# and the exports of later versions of it, e.g. zenodo_export_v1.1/
 zenodo_export/
 zenodo_export.building/
+zenodo_export_*/
+zenodo_export_*.building/
 
 # Cross-machine raw results: CPU probe outputs and fetched cloud sweeps
 # (their content is in the data deposit, as probes.csv and trials.csv)

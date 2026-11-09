@@ -33,7 +33,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .base import RegressionBaseModelTrainer
+from .base import RegressionBaseModelTrainer, INIT_ORIGINAL
 from .BourginMLP import SReLU
 from utils.log_utils import log
 
@@ -55,9 +55,9 @@ class SparseMLP(RegressionBaseModelTrainer):
     epsilon = 20  # Mocanu 2018 default; ≈ 8x average connectivity per neuron
 
     def __init__(self, input_size, learning_rate=0.001, patience=10,
-                 seed=42, output_path="", device=None):
+                 seed=42, output_path="", device=None, init=INIT_ORIGINAL):
         super().__init__(input_size, learning_rate, patience,
-                         device=device, output_path=output_path)
+                         device=device, output_path=output_path, init=init)
 
         h1, h2, h3 = self.hidden_sizes
         self.fc1 = nn.Linear(input_size, h1).to(self.device)
@@ -80,6 +80,7 @@ class SparseMLP(RegressionBaseModelTrainer):
         # Output layer stays dense (Mocanu 2018: too few output neurons to bother sparsifying).
 
         self._initialize_weights(seed)
+        self._applyInitScheme(seed)
         kept = [self.mask1.mean().item(), self.mask2.mean().item(), self.mask3.mean().item()]
         log(f"[{self.model_name}] Initialization complete "
             f"(hidden={self.hidden_sizes}, eps={self.epsilon}, "

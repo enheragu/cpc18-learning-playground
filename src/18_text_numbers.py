@@ -251,6 +251,8 @@ def loadDeposit(deposit):
 
     d = types.SimpleNamespace()
     d.trials = read(os.path.join(deposit, "trials.csv"))
+    if "protocol" in d.trials:  # deposit 1.1 and later: these numbers are those of the original protocol
+        d.trials = d.trials[d.trials.protocol == "original"]
     d.perproblem = read(os.path.join(deposit, "perproblem_errors.csv"))
     d.split = read(os.path.join(deposit, "split_variance.csv"))
     d.features = read(featuresPath(deposit))
@@ -276,7 +278,7 @@ def loadDeposit(deposit):
 
 
 def sectionIntroduction(d):
-    print("\n== Section 1.1: the variance phenomenon, BourginMLP main run ==")
+    print("\n== Section 1: the variance phenomenon, BourginMLP main run ==")
     x = d.V["BourginMLP"]
     epochs = d.main[d.main.condition == "BourginMLP"].best_epoch
     print(f"  epoch of the best test MSE, 0-based: from {epochs.min():.0f} to {epochs.max():.0f}, "
@@ -452,7 +454,7 @@ def factorialGrid(fac, model):
 
 
 def sectionDecomposition(d):
-    print("\n== Section 3.3: init x order factorial ==")
+    print("\n== Section 3.4.1: init x order factorial ==")
     grids = {m: factorialGrid(d.fac, m) for m in NEURAL}
     bm = grids["BourginMLP"].to_numpy()
     spread = bm.std(axis=0, ddof=1)
@@ -488,7 +490,7 @@ def tiedMinima(grid):
 
 
 def sectionAblation(d):
-    print("\n== Section 3.4: ablation studies ==")
+    print("\n== Section 3.3: ablation studies ==")
     print("  -- Sensitivity to the grid, % of the total SS --")
     converged = d.A1all[d.A1all.lr < 5e-3]
     means = converged.groupby(["f1", "lr"]).mse_x100.mean()
@@ -522,7 +524,7 @@ def sectionAblation(d):
         print("    Bootstrap   " + " ".join(f"{swapBootstrap(a, b, n):.3f}" for n in range(1, 6)))
     c16, c32 = cellValues(d.A1, 16, 1e-3), cellValues(d.A1, 32, 1e-3)
     print(f"  B = 16 strictly below B = 32 at lr = 1e-3: {percent(np.mean(c16 < c32))} % of the shared seeds "
-          "(Hodges-Lehmann estimate: last lines of Appendix H)")
+          "(Hodges-Lehmann estimate: last lines of Appendix D)")
 
     print("  -- Per-seed best cell and greedy search --")
     for name, frame in (("Ablation BourginMLP", d.A1), ("Ablation SparseMLP", d.A3)):
@@ -562,7 +564,7 @@ def sectionAblation(d):
 
 
 def sectionVarianceSources(d):
-    print("\n== Section 3.5: variance sources ==")
+    print("\n== Section 3.4.2: variance sources ==")
     print("  BourginMLP, per-problem squared error x 100 over the first 50 shared seeds:")
     W = d.perproblem[d.perproblem.model == "BourginMLP"].pivot(index="seed", columns="problem_id",
                                                                values="mean_sq_error_x100")
@@ -617,7 +619,7 @@ def sectionDiscussion(d):
           + ", ".join(f"{label(m)} {d.V[m].std(ddof=1):.3f}"
                       for m in ("BEAST_GB", "PsychForest", "ContextDepNet", "SparseMLP", "BourginMLP")))
 
-    print("  -- Section 5.2 and Appendix A, failure rate of BourginMLP, main run --")
+    print("  -- Section 3.6 and Appendix A, failure rate of BourginMLP, main run --")
     x = d.V["BourginMLP"]
     print(f"    threshold {FAIL_THRESHOLD}: converged {percent(np.mean(x <= FAIL_THRESHOLD))} % of the trials, mean "
           f"{x[x <= FAIL_THRESHOLD].mean():.2f}; failed {percent(np.mean(x > FAIL_THRESHOLD))} %, mean "
@@ -630,7 +632,7 @@ def sectionDiscussion(d):
           f"{stats.pearsonr(trial.mse_x100, trial.best_epoch)[0]:.2f}")
     print(f"    chance of no failed trial at a 7 % failure rate: 0.93^10 = {0.93 ** 10:.2f}, 0.93^5 = {0.93 ** 5:.2f}")
 
-    print("  -- Section 5.5, validation split (early stopping on validation MSE, same trajectories) --")
+    print("  -- Validation split, not reported in the article (early stopping on validation MSE, same trajectories) --")
     runs = d.ref[d.ref.experiment == "validation_split"]
     for m in ("BourginMLP", "ContextDepNet"):
         g = runs[runs.model == m]
@@ -641,7 +643,7 @@ def sectionDiscussion(d):
 
 
 def appendixPool():
-    print("\n== Appendix D: pool alignment ==")
+    print("\n== Pool alignment, not reported in the article ==")
     print(f"  first five seeds of the pool of master {MASTER_SEED_FOR_POOL}: {seedPool(MASTER_SEED_FOR_POOL, 5).tolist()}")
 
 
@@ -665,7 +667,7 @@ def pathValues(trials):
 
 
 def appendixCrossMachine(d):
-    print("\n== Appendix H and Section 3.6: replication across machines ==")
+    print("\n== Appendix D and Section 3.5: replication across machines ==")
     trials = d.trials
     print("  -- Design --")
     laboratory = [m for ms in PATHS.values() for m in ms if m not in ("M00", "C02")]
@@ -730,6 +732,12 @@ def appendixCrossMachine(d):
         print(f"  {CONDITIONS[k][2]}, against the reference path: epoch changes on {percent(np.mean(moved), 0)} % of the "
               f"seeds on average; those seeds carry {percent(min(carried), 0)} to {percent(max(carried), 0)} % of the "
               "total squared difference")
+
+    print("  -- BourginMLP, main condition: change of the 90th and 95th percentiles of the MSE against the reference path, % --")
+    reference = onPath("B32", "AVX512")
+    for path in COMPARISON:
+        x = onPath("B32", path)
+        print(f"  {path}: " + ", ".join(f"{100 * (np.percentile(x, q) / np.percentile(reference, q) - 1):+.1f}" for q in (90, 95)))
 
     print("  -- BourginMLP per seed, against the reference path (differences = path - reference) --")
     print("  columns: std of the differences; Spearman; seed x machine interaction, % of the SS; closest 10 % of seed pairs")

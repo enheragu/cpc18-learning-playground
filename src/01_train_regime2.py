@@ -22,6 +22,11 @@ Pool of models = 6:
   - SparseMLP        - BourginMLP with a static sparse mask (Mocanu 2018)
   - PsychForest      - Plonsky 2017 (AAAI)
   - BEAST_GB         - Plonsky 2018/2024 (CPC18 winner / Nature 2025)
+
+`--protocol stable` trains the four neural models under the stable protocol
+(cpc18_utils/protocol.py) and writes to output_data_stable/; the tree-based
+models are the same under both protocols and are trained only by the default
+`--protocol original`.
 """
 
 import os
@@ -49,12 +54,16 @@ from utils.log_utils import log
 from utils.yaml_utils import getMetricsLogFile
 from utils.set_seed import set_seed
 
-from cpc18_utils import output_path
+from cpc18_utils import output_path, stable_output_path
 from cpc18_utils.features import (
     load_cpc18_features, cpc18_features_input_size,
 )
 from cpc18_utils.data import CPC18Dataset
 from cpc18_utils.safe_yaml import atomicUpdateMetricsLogFile
+from cpc18_utils.protocol import (
+    PROTOCOLS, PROTOCOL_ORIGINAL, PROTOCOL_STABLE, NEURAL_MODELS, STABLE_INIT,
+    readoutEpoch, stablePatience, stableEntry,
+)
 from cpc18_models import (
     LinearLogistic, BourginMLP,
     ContextDepNet, SparseMLP,
@@ -129,9 +138,13 @@ _FILENAME_PREFIX = {
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.\d{3}$")
 
 
-def _metricsPath(model_name: str) -> str:
+def _outputRoot(protocol: str) -> str:
+    return output_path if protocol == PROTOCOL_ORIGINAL else stable_output_path
+
+
+def _metricsPath(model_name: str, protocol: str = PROTOCOL_ORIGINAL) -> str:
     prefix = _FILENAME_PREFIX[SEED_MODE]
-    p = os.path.join(output_path, model_name, f"{prefix}_training_metrics.yaml")
+    p = os.path.join(_outputRoot(protocol), model_name, f"{prefix}_training_metrics.yaml")
     os.makedirs(os.path.dirname(p), exist_ok=True)
     return p
 
@@ -153,44 +166,56 @@ def _seedForIndex(idx: int, shared_pool) -> int:
 
 
 def _runOneTrial(task):
-    model_name, seed, _trial_index = task
+    model_name, seed, _trial_index, protocol = task
 
     torch.set_num_threads(1)
 
-    metrics_log_file = _metricsPath(model_name)
+    metrics_log_file = _metricsPath(model_name, protocol)
     if seed in _seedsAlreadyDone(metrics_log_file):
         return f"skip {model_name}/{seed}"
+
+    ModelClass = _MODEL_REGISTRY[model_name]
+    stable = protocol == PROTOCOL_STABLE
+    trial_patience = patience
+    init_kwargs = {}
+    if stable:
+        trial_patience = stablePatience(model_name)
+        init_kwargs = {"init": STABLE_INIT}
+        readout = readoutEpoch(model_name, batch_size, learning_rate,
+                               getattr(ModelClass, "epsilon", None))
 
     set_seed(seed)
     splits = load_cpc18_features()
     train_loader, test_loader = _buildLoaders(splits)
 
-    ModelClass = _MODEL_REGISTRY[model_name]
     model = ModelClass(
         input_size=cpc18_features_input_size(),
         learning_rate=learning_rate,
-        patience=patience,
+        patience=trial_patience,
         seed=seed,
-        output_path=output_path,
+        output_path=_outputRoot(protocol),
         device=device,
+        **init_kwargs,
     )
     run_metrics = model.spinTrainEval(train_loader, test_loader, num_epochs)
     for _ts, entry in run_metrics.items():
-        entry["patience"] = patience
+        entry["patience"] = trial_patience
         entry["learning_rate"] = learning_rate
         entry["batch_size"] = batch_size
         entry["seed_mode"] = SEED_MODE
         entry["regime"] = 2
+        if stable:
+            stableEntry(entry, readout, model.init_name)
     atomicUpdateMetricsLogFile(run_metrics, metrics_log_file)
     return f"done {model_name}/{seed}"
 
 
-def _buildTaskList(shared_pool):
+def _buildTaskList(shared_pool, protocol):
     tasks = []
     for ModelClass, num_iter in model_iterations.items():
         for k in range(num_iter):
             seed = _seedForIndex(k, shared_pool)
-            tasks.append((ModelClass.__name__, seed, k))
+            tasks.append((ModelClass.__name__, seed, k, protocol))
     return tasks
 
 
@@ -203,7 +228,11 @@ def main():
     parser.add_argument("--models", type=str, default=None,
                          help="Comma-separated model class names to "
                               "restrict this run to (default: all 6 "
-                              "models in the registry).")
+                              "models in the registry, the 4 neural ones "
+                              "with --protocol stable).")
+    parser.add_argument("--protocol", choices=PROTOCOLS, default=PROTOCOL_ORIGINAL,
+                        help="Training protocol (cpc18_utils/protocol.py). "
+                             "'stable' writes to output_data_stable/.")
     args = parser.parse_args()
 
     global model_iterations
@@ -212,14 +241,20 @@ def main():
         missing = [w for w in wanted if w not in _MODEL_REGISTRY]
         if missing:
             raise SystemExit(f"Unknown model(s): {missing}")
+        if args.protocol == PROTOCOL_STABLE and set(wanted) - set(NEURAL_MODELS):
+            raise SystemExit(f"{sorted(set(wanted) - set(NEURAL_MODELS))} have no stable "
+                             f"protocol: their original results serve both protocols")
         model_iterations = {
             _MODEL_REGISTRY[w]: model_iterations[_MODEL_REGISTRY[w]]
             for w in wanted
         }
+    elif args.protocol == PROTOCOL_STABLE:
+        model_iterations = {cls: n for cls, n in model_iterations.items()
+                            if cls.__name__ in NEURAL_MODELS}
 
     input_size = cpc18_features_input_size()
     log(f"[main] Regime 2. Device: {device}. Input size: {input_size}. "
-        f"Seed mode: {SEED_MODE}. Workers: {args.workers}.")
+        f"Seed mode: {SEED_MODE}. Protocol: {args.protocol}. Workers: {args.workers}.")
 
     # Touch dataset once: fail fast with a clear error if the CSV is missing.
     splits = load_cpc18_features()
@@ -235,7 +270,7 @@ def main():
     assert len(set(shared_pool.tolist())) == len(shared_pool), \
         "duplicate seed in shared pool (would silently drop a trial)"
 
-    tasks = _buildTaskList(shared_pool)
+    tasks = _buildTaskList(shared_pool, args.protocol)
 
     failed = 0
     if args.workers <= 1:

@@ -6,11 +6,11 @@ Does the DISTRIBUTION survive a change of hardware, even when individual runs
 do not?
 
 Bit-exactness across arithmetic paths is lost, and per-seed ranking with it
-for the sensitive conditions (Appendix H of the manuscript). The narrower
+for the sensitive conditions (Appendix D of the manuscript). The narrower
 question is whether the summary statistics still hold when someone replicates
 outside the controlled environment.
 
-Runs the distribution comparison of Appendix H for any tag, so a new machine
+Runs the distribution comparison of Appendix D for any tag, so a new machine
 can be tested the same way. Reports, per condition:
 
   - centre / spread / shape agreement (Mann-Whitney, Levene, KS)

@@ -30,6 +30,9 @@ to use the same global torch state -> init and order are confounded.
 YAML output: `output_data/BourginMLP/factorial_init_order_r2_training_metrics.yaml`
 Per-trial metadata: `init_seed`, `order_seed`, `seed_decomposed=True`,
 plus the usual `mse`, `train_duration`, etc.
+
+`--protocol stable` trains the same grid under the stable protocol
+(cpc18_utils/protocol.py) and writes to output_data_stable/.
 """
 
 import os
@@ -53,10 +56,14 @@ from utils.log_utils import log
 from utils.yaml_utils import getMetricsLogFile
 from utils.set_seed import set_seed
 
-from cpc18_utils import output_path
+from cpc18_utils import output_path, stable_output_path
 from cpc18_utils.features import load_cpc18_features, cpc18_features_input_size
 from cpc18_utils.data import CPC18Dataset
 from cpc18_utils.safe_yaml import atomicUpdateMetricsLogFile
+from cpc18_utils.protocol import (
+    PROTOCOLS, PROTOCOL_ORIGINAL, PROTOCOL_STABLE, STABLE_INIT,
+    readoutEpoch, stablePatience, stableEntry,
+)
 from cpc18_models import BourginMLP, LinearLogistic, ContextDepNet, SparseMLP
 
 
@@ -108,9 +115,13 @@ _YAML_NAME = "factorial_init_order_r2_training_metrics.yaml"
 _MODEL_NAME = BourginMLP.__name__
 
 
-def _metricsPath(model_name=None) -> str:
+def _outputRoot(protocol: str) -> str:
+    return output_path if protocol == PROTOCOL_ORIGINAL else stable_output_path
+
+
+def _metricsPath(model_name=None, protocol=PROTOCOL_ORIGINAL) -> str:
     model_name = model_name or _MODEL_NAME
-    p = os.path.join(output_path, model_name, _YAML_NAME)
+    p = os.path.join(_outputRoot(protocol), model_name, _YAML_NAME)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     return p
 
@@ -152,12 +163,22 @@ def _runOneTrial(task):
     both the fork start method (used here) and spawn, where forked-global
     inheritance would not apply and every worker would otherwise default
     to BourginMLP regardless of --model."""
-    init_seed, order_seed, model_name = task
+    init_seed, order_seed, model_name, protocol = task
 
     torch.set_num_threads(1)
-    metrics_log_file = _metricsPath(model_name)
+    metrics_log_file = _metricsPath(model_name, protocol)
     if (init_seed, order_seed) in _pairsAlreadyDone(metrics_log_file):
         return f"skip ({init_seed}, {order_seed})"
+
+    ModelClass = _DECOMP_MODEL_REGISTRY[model_name]
+    stable = protocol == PROTOCOL_STABLE
+    trial_patience = patience
+    init_kwargs = {}
+    if stable:
+        trial_patience = stablePatience(model_name)
+        init_kwargs = {"init": STABLE_INIT}
+        readout = readoutEpoch(model_name, batch_size, learning_rate,
+                               getattr(ModelClass, "epsilon", None))
 
     # set_seed fixes the global torch RNG -> used by Linear default init.
     # _initialize_weights then resets it to init_seed and draws Kaiming.
@@ -167,25 +188,27 @@ def _runOneTrial(task):
     splits = load_cpc18_features()
     train_loader, test_loader = _buildLoaders(splits, order_seed=order_seed)
 
-    ModelClass = _DECOMP_MODEL_REGISTRY[model_name]
     model = ModelClass(
         input_size=cpc18_features_input_size(),
         learning_rate=learning_rate,
-        patience=patience,
+        patience=trial_patience,
         seed=init_seed,
-        output_path=output_path,
+        output_path=_outputRoot(protocol),
         device=device,
+        **init_kwargs,
     )
     run_metrics = model.spinTrainEval(train_loader, test_loader, num_epochs)
     for _ts, entry in run_metrics.items():
         entry["init_seed"] = int(init_seed)
         entry["order_seed"] = int(order_seed)
         entry["seed_decomposed"] = True
-        entry["patience"] = patience
+        entry["patience"] = trial_patience
         entry["learning_rate"] = learning_rate
         entry["batch_size"] = batch_size
         entry["seed_mode"] = "factorial_init_order"
         entry["regime"] = 2
+        if stable:
+            stableEntry(entry, readout, model.init_name)
     atomicUpdateMetricsLogFile(run_metrics, metrics_log_file)
     return f"done ({init_seed}, {order_seed})"
 
@@ -209,12 +232,15 @@ def main():
                         help="Which torch NN model to run Phase C on. "
                         "PsychForest / BEAST_GB are excluded because they "
                         "don't use a DataLoader (no order axis).")
+    parser.add_argument("--protocol", choices=PROTOCOLS, default=PROTOCOL_ORIGINAL,
+                        help="Training protocol (cpc18_utils/protocol.py). "
+                             "'stable' writes to output_data_stable/.")
     args = parser.parse_args()
     _MODEL_NAME = args.model
 
     log(f"[main] Variance decomposition for {_MODEL_NAME}. Device: {device}. "
         f"Grid: {N_INIT} init x {N_ORDER} order = {N_INIT*N_ORDER} trials. "
-        f"Workers: {args.workers}.")
+        f"Protocol: {args.protocol}. Workers: {args.workers}.")
 
     splits = load_cpc18_features()
     log(f"[main] Train: {len(splits.train_problems)} problems / "
@@ -224,7 +250,7 @@ def main():
     init_pool, order_pool = _build_pools()
     assert len(set(init_pool.tolist())) == len(init_pool), "duplicate init seed in pool"
     assert len(set(order_pool.tolist())) == len(order_pool), "duplicate order seed in pool"
-    tasks = [(int(i), int(o), _MODEL_NAME)
+    tasks = [(int(i), int(o), _MODEL_NAME, args.protocol)
              for i in init_pool for o in order_pool]
     log(f"[main] First few (init, order) pairs: {tasks[:3]}")
 

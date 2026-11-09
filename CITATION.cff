@@ -6,8 +6,8 @@ abstract: >-
   Training and analysis code of a variance-aware evaluation of behavioral
   choice prediction models on the Choice Prediction Competition 2018 (CPC18).
   It trains four neural and two tree-based models hundreds of times per
-  condition from shared seed pools, decouples weight initialization from data
-  order in a factorial design, runs two hyperparameter ablations, and repeats
+  condition from shared seed pools under two training protocols, decouples
+  weight initialization from data order in a factorial design, runs two hyperparameter ablations, and repeats
   a subset of conditions on other machines and CPU instruction-set tiers. The
   analysis scripts compute the statistics, tables and figures of the
   accompanying article: fitted lower-tail targets, misranking probabilities by
@@ -37,7 +37,7 @@ keywords:
   - training variance
   - random seeds
   - reproducibility
-version: 1.0.0
+version: 1.1.0
 license: MIT
 doi: 10.5281/zenodo.24013058
 identifiers:
