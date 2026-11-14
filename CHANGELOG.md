@@ -13,6 +13,7 @@ maintenance updates, including docs polish that does not change behavior. Versio
 were reconstructed from the git history, with each tag on the last commit of its version.
 
 ## [Unreleased]
+- Figures: the figure of the standard error of the mean is titled and labelled as the standard error, which is what it plots.
 
 ## [1.1.0](https://github.com/enheragu/cpc18-learning-playground/releases/tag/v1.1.0) - 2026-11-09
 
